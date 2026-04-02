@@ -1,0 +1,61 @@
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# API keys
+*.key
+*.pem
+secrets.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node
+node_modules/
+
+# Personal configs (if any)
+personal/
+private/
+.ace-tool/
+
+# Local Claude Code config (user-specific, not committed)
+.claude/
+
+# Local generated knowledge cache
+.claude/knowledge/
+
+# Test coverage reports
+coverage/
+.nyc_output/
+
+# Build output
+dist/
+build/
+
+# ESLint cache
+.eslintcache
+
+# Temp files
+*.tmp
+*.temp
+*.backup
+*.backup.*
+.test-*
+.aimax/
+
+# npm publish artifacts
+*.tgz
+
+# Auto-cli runtime cache (per-project, not committed)
+.auto/
+
+# Planning documents (one-time, not for repo)
+PLAN.md

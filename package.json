@@ -1,0 +1,87 @@
+{
+  "name": "auto-cli",
+  "version": "0.26.0",
+  "description": "Auto CLI - Claude Code 超级开发辅助工具",
+  "main": "src/index.js",
+  "bin": {
+    "auto": "./bin/cli.js"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/ bin/ tests/",
+    "lint:fix": "eslint src/ bin/ tests/ --fix",
+    "format": "prettier --write \"src/**/*.js\" \"bin/**/*.js\" \"tests/**/*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"bin/**/*.js\" \"tests/**/*.js\"",
+    "sync": "cp commands/*.md .claude/commands/auto/ && echo 'Synced commands/ → .claude/commands/auto/'",
+    "prepublishOnly": "npm test",
+    "prepare": "npx husky"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "cli",
+    "ai",
+    "agents",
+    "workflow",
+    "productivity",
+    "programming",
+    "automation"
+  ],
+  "author": "Auto CLI Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ktyyer/auto-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/ktyyer/auto-cli/issues"
+  },
+  "homepage": "https://github.com/ktyyer/auto-cli#readme",
+  "files": [
+    "bin",
+    "src",
+    "agents",
+    "rules",
+    "commands",
+    "skills",
+    "hooks"
+  ],
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "fs-extra": "^11.2.0",
+    "inquirer": "^9.2.23",
+    "ora": "^8.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "type": "module",
+  "lint-staged": {
+    "src/**/*.js": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "bin/**/*.js": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "tests/**/*.js": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^1.6.0",
+    "eslint": "^9.39.4",
+    "globals": "^15.15.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
+    "vitest": "^1.6.0"
+  }
+}
