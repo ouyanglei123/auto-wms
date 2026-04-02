@@ -323,3 +323,5 @@ auto save search -q "关键词"  # 搜索知识条目
 ## License
 
 MIT
+#   a u t o - w m s  
+ 
