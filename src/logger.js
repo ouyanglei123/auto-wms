@@ -174,7 +174,7 @@ class Logger {
 /** @type {Logger} */
 const logger = new Logger({
   level: LOG_LEVELS.INFO,
-  prefix: 'auto-cli',
+  prefix: 'auto-wms',
   timestamp: false
 });
 

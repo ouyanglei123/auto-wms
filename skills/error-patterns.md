@@ -2,7 +2,7 @@
 name: error-patterns
 description: 常见错误模式速查 - 编译错误、运行时错误、测试失败、CI/CD 故障的根因分析和速修方案，让 build-fix Agent 秒级定位问题
 version: 1.0.0
-author: auto-cli
+author: auto-wms
 tags: [error, debugging, patterns, build-fix, troubleshooting]
 ---
 
@@ -73,7 +73,7 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 4. **版本回退**：`git stash` 暂存改动，验证是否是最近引入的
 5. **搜索引擎**：通过 brave-search/tavily MCP 搜索错误信息
 
-## 与 auto-cli 集成
+## 与 auto-wms 集成
 
 - `/auto:build-fix` 自动加载此知识库
 - quest-designer 在设计 Quest 时可参考反模式警告

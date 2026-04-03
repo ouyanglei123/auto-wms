@@ -303,7 +303,7 @@ src/
 
 ---
 
-## 与 Auto CLI 集成
+## 与 Auto WMS 集成
 
 - 提取的 Skill 会被 quest-designer v4 在 PHASE 2 发现
 - 补充 `unified-memory-system` 的知识沉淀能力

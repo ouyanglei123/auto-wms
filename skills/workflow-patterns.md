@@ -2,7 +2,7 @@
 name: workflow-patterns
 description: 开发工作流模式集合 - Plan Mode 工作流、Multi-Agent 编排、根因追踪方法论、10 维度代码审查清单
 version: 1.0.0
-author: auto-cli
+author: auto-wms
 tags: [workflow, plan-mode, orchestration, root-cause, debugging, patterns, agent, parallel, troubleshooting, review, checklist, quality, self-correction, verification]
 ---
 
@@ -35,7 +35,7 @@ tags: [workflow, plan-mode, orchestration, root-cause, debugging, patterns, agen
   +--- 无匹配 -> 默认 Implement
 ```
 
-### 与 Auto CLI 对应
+### 与 Auto WMS 对应
 
 | 工作流 | PHASE 1 | quest-designer | Canonical Router |
 |--------|---------|----------------|------------------|

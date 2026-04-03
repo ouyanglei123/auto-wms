@@ -71,7 +71,7 @@ Glob("package.json")
 ### 5. 输出诊断报告
 
 ```markdown
-## Auto CLI 环境诊断报告
+## Auto WMS 环境诊断报告
 
 ### 基础环境
 - Node.js: v20.11.0 -- PASS

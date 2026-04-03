@@ -1,7 +1,7 @@
 {
-  "name": "auto-cli",
-  "version": "0.26.0",
-  "description": "Auto CLI - Claude Code 超级开发辅助工具",
+  "name": "auto-wms",
+  "version": "0.27.0",
+  "description": "Auto WMS - WMS 仓储管理系统智能开发辅助工具",
   "main": "src/index.js",
   "bin": {
     "auto": "./bin/cli.js"
@@ -25,20 +25,21 @@
     "ai",
     "agents",
     "workflow",
-    "productivity",
-    "programming",
+    "wms",
+    "warehouse",
+    "logistics",
     "automation"
   ],
-  "author": "Auto CLI Team",
+  "author": "Auto WMS Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ktyyer/auto-cli"
+    "url": "https://github.com/ouyanglei123/auto-wms"
   },
   "bugs": {
-    "url": "https://github.com/ktyyer/auto-cli/issues"
+    "url": "https://github.com/ouyanglei123/auto-wms/issues"
   },
-  "homepage": "https://github.com/ktyyer/auto-cli#readme",
+  "homepage": "https://github.com/ouyanglei123/auto-wms#readme",
   "files": [
     "bin",
     "src",

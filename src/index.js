@@ -65,7 +65,7 @@ export async function runInstall(options = {}) {
   console.log('');
 
   if (!options.yes) {
-    const confirmed = await promptConfirmation('确认安装 Auto CLI？');
+    const confirmed = await promptConfirmation('确认安装 Auto WMS？');
     if (!confirmed) {
       console.log(chalk.yellow('安装已取消。'));
       return;
@@ -99,7 +99,7 @@ export async function runUpdate(options = {}) {
   const selectedComponents = installedVersion.components || Object.keys(COMPONENTS);
 
   if (!options.yes) {
-    const confirmed = await promptConfirmation('确认更新 Auto CLI？');
+    const confirmed = await promptConfirmation('确认更新 Auto WMS？');
     if (!confirmed) {
       console.log(chalk.yellow('更新已取消。'));
       return;

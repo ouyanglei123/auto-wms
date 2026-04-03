@@ -282,8 +282,8 @@ describe('logger.js', () => {
       expect(logger).toBeInstanceOf(Logger);
     });
 
-    it('should have prefix auto-cli', () => {
-      expect(logger.prefix).toBe('auto-cli');
+    it('should have prefix auto-wms', () => {
+      expect(logger.prefix).toBe('auto-wms');
     });
   });
 });

@@ -44,8 +44,8 @@ export function getClaudeDir() {
 }
 
 /**
- * 获取 Auto CLI 官方文件目录（更新时会覆盖）
- * @returns {string} Auto CLI 官方文件目录的绝对路径
+ * 获取 Auto WMS 官方文件目录（更新时会覆盖）
+ * @returns {string} Auto WMS 官方文件目录的绝对路径
  */
 export function getAutoDir() {
   return path.join(getClaudeDir(), 'auto');

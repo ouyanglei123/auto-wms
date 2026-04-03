@@ -22,11 +22,11 @@ export const PROJECT_ROOT = path.resolve(__dirname, '..');
 
 // 文档 URL
 /** @type {string} */
-export const DOCS_URL = process.env.AUTO_CLI_DOCS_URL || 'https://github.com/ktyyer/auto-cli';
+export const DOCS_URL = process.env.AUTO_WMS_DOCS_URL || 'https://github.com/ouyanglei123/auto-wms';
 
 // 日志级别
 /** @type {'debug'|'info'|'warn'|'error'|'silent'} */
-export const LOG_LEVEL = process.env.AUTO_CLI_LOG_LEVEL || 'info';
+export const LOG_LEVEL = process.env.AUTO_WMS_LOG_LEVEL || 'info';
 
 // 默认重试次数
 /** @type {number} */

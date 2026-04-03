@@ -12,7 +12,7 @@ export function showBanner() {
   console.log(chalk.cyan.bold('  ║                                           ║'));
   console.log(
     chalk.cyan.bold('  ║') +
-      chalk.white.bold(`           Auto CLI（v${version}）                 `) +
+      chalk.white.bold(`           Auto WMS（v${version}）                 `) +
       chalk.cyan.bold('║')
   );
   console.log(
@@ -51,7 +51,7 @@ export async function promptUninstallConfirmation() {
     {
       type: 'confirm',
       name: 'confirmed',
-      message: chalk.yellow('确定要卸载 Auto CLI 吗？'),
+      message: chalk.yellow('确定要卸载 Auto WMS 吗？'),
       default: false
     }
   ]);
@@ -100,10 +100,10 @@ export async function promptMainMenu() {
   const installedVersion = await getInstalledVersion();
 
   const choices = [
-    { name: '安装 Auto CLI', value: 'install' },
-    { name: '更新 Auto CLI', value: 'update', disabled: !installedVersion ? '（未安装）' : false },
+    { name: '安装 Auto WMS', value: 'install' },
+    { name: '更新 Auto WMS', value: 'update', disabled: !installedVersion ? '（未安装）' : false },
     {
-      name: '卸载 Auto CLI',
+      name: '卸载 Auto WMS',
       value: 'uninstall',
       disabled: !installedVersion ? '（未安装）' : false
     },

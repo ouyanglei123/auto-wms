@@ -31,12 +31,12 @@ Auto CLI 是运行在 Claude Code 中的智能开发辅助工具。输入 `/auto
 
 ```bash
 # 方式一：npm 全局安装
-npm install -g auto-cli
+npm install -g auto-wms
 auto install
 
 # 方式二：从源码安装
 npm pack
-npm install -g auto-cli-0.24.0.tgz
+npm install -g auto-wms-0.24.0.tgz
 auto install
 
 # 安装后重启 Claude Code
@@ -323,5 +323,6 @@ auto save search -q "关键词"  # 搜索知识条目
 ## License
 
 MIT
-#   a u t o - w m s  
+#   a u t o - w m s 
+ 
  

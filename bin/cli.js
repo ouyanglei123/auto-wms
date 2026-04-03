@@ -11,7 +11,7 @@ const program = new Command();
 
 program
   .name('auto')
-  .description('Auto CLI - Claude Code 能力增强 CLI 工具')
+  .description('Auto WMS - WMS 仓储管理系统智能开发辅助工具')
   .version(getPackageVersion(), '-v, --version', '显示版本号');
 
 // 默认命令 - 交互模式
@@ -27,7 +27,7 @@ program.action(async () => {
 // 安装命令
 program
   .command('install')
-  .description('安装 Auto CLI')
+  .description('安装 Auto WMS')
   .option('-y, --yes', '跳过确认提示')
   .option('-f, --force', '强制覆盖现有文件（不备份）')
   .option('-c, --components <list>', '指定安装的组件，逗号分隔（如: agents,commands,skills）')
@@ -53,7 +53,7 @@ program
 // 更新命令
 program
   .command('update')
-  .description('更新 Auto CLI')
+  .description('更新 Auto WMS')
   .option('-y, --yes', '跳过确认提示')
   .action(async (options) => {
     try {
@@ -67,7 +67,7 @@ program
 // 卸载命令
 program
   .command('uninstall')
-  .description('卸载 Auto CLI')
+  .description('卸载 Auto WMS')
   .option('-y, --yes', '跳过确认提示')
   .action(async (options) => {
     try {

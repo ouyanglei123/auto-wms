@@ -2,7 +2,7 @@
 name: init-project
 description: 项目智能初始化 - 为新项目生成结构化 CLAUDE.md，包含技术栈声明、编码规范、目录说明和 AI 行为约束，让 AI 从第一天就"懂"你的项目
 version: 1.0.0
-author: auto-cli
+author: auto-wms
 tags: [init, setup, claude-md, project-context, onboarding]
 ---
 
@@ -230,7 +230,7 @@ tests/
 
 ---
 
-## 与 Auto CLI 的集成
+## 与 Auto WMS 的集成
 
 - `/auto 为当前项目生成 CLAUDE.md` -- 自动触发本 Skill
 - quest-designer 在 PHASE 2 分析时会检查 CLAUDE.md 是否存在，不存在时推荐使用本 Skill

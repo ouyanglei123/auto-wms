@@ -1,13 +1,13 @@
 # 贡献指南
 
-感谢你对 Auto CLI 的关注！以下是参与贡献的指南。
+感谢你对 Auto WMS 的关注！以下是参与贡献的指南。
 
 ## 开发环境
 
 ```bash
 # 克隆仓库
-git clone https://github.com/ktyyer/auto-cli.git
-cd auto-cli
+git clone https://github.com/ouyanglei123/auto-wms.git
+cd auto-wms
 
 # 安装依赖
 npm install
@@ -59,7 +59,7 @@ npm run format
 ## 项目结构
 
 ```
-auto-cli/
+auto-wms/
   bin/cli.js          # CLI 入口
   src/                # 核心源码
     config.js         # 配置常量
@@ -88,8 +88,8 @@ auto-cli/
 
 ## 报告 Bug
 
-请使用 [Bug Report](https://github.com/ktyyer/auto-cli/issues/new?template=bug_report.yml) 模板。
+请使用 [Bug Report](https://github.com/ktyyer/auto-wms/issues/new?template=bug_report.yml) 模板。
 
 ## 提出功能建议
 
-请使用 [Feature Request](https://github.com/ktyyer/auto-cli/issues/new?template=feature_request.yml) 模板。
+请使用 [Feature Request](https://github.com/ktyyer/auto-wms/issues/new?template=feature_request.yml) 模板。

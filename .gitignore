@@ -54,7 +54,7 @@ build/
 # npm publish artifacts
 *.tgz
 
-# Auto-cli runtime cache (per-project, not committed)
+# Auto-wms runtime cache (per-project, not committed)
 .auto/
 
 # Planning documents (one-time, not for repo)
