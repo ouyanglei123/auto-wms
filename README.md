@@ -1,6 +1,6 @@
-# Auto CLI
+# Auto WMS
 
-> Claude Code 超级开发辅助 -- 一条命令，AI 自动编排所有能力完成任务
+> WMS 仓储管理系统智能开发辅助工具
 
 ---
 
