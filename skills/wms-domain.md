@@ -1253,3 +1253,358 @@ PlacementAdviceService.doAgvCarryTaskCreate()
 | storage | 29 | 50 | 58 | 10 | 12 | 13 | 58+6 |
 | edi | 24 | 55 | 38 | 20 | 14 | 1(HTTP) | 2 |
 | **合计** | **448** | **581** | **477** | **76** | **83** | **52** | **368** |
+
+---
+
+## 25. 出库订单与波次业务体系
+
+### 25.1 核心代码定位
+
+| 业务域 | Controller | ServiceImpl | Entity |
+|--------|-----------|-------------|--------|
+| **订单管理** | OutboundMasterController, OutboundDetailController | OutboundMasterServiceImpl, OutboundServiceImpl | OutboundMaster, OutboundDetail |
+| **波次管理** | WaveController, WaveMasterController, WaveAutoAllocationController | WaveServiceImpl, CreateWaveServiceImpl, WaveAllocationServiceImpl | WaveMaster, WaveDetail |
+| **EDI订单** | EdiOutboundController | EdiOutboundService | — |
+
+**关键枚举**: `OutboundStatusEnum`, `OutboundSourceEnum`, `OutboundTypeEnum`, `WaveEnum`, `WaveTypeEnum`, `WavePickType`, `CreateWayEnum`
+
+### 25.2 出库订单状态机
+
+```
+NEW → WAVED → ALLOCATED → PICKING → TO_SORTING → SORTING → TO_SHIPPING → SHIPPING
+  │                                                                  │
+  ├── ABNORMAL ─────────────────────────────────────────────────────────┤
+  ├── PARTIALLY_SHIPPED                                               │
+  ├── DIFCANCELED                                                    │
+  └── CANCELED                                                       │
+```
+
+**订单类型**:
+| 类型码 | 说明 |
+|-------|------|
+| PUO1 | 内部领用 |
+| PUO3 | 报损出库 |
+| PUO4 | 品控取样 |
+| PUO5 | 销售取样 |
+| ZOR | 库存类销售出库单 |
+| MD | 海底捞门店要货 |
+| TT/ZZTT | 片区调拨出库 |
+| GYUB | 转储出库订单 |
+| ZSO/ZKTH/ZSTH/TH | 退供单 |
+
+### 25.3 波次状态机
+
+```
+NEW → ALLOCATED → WORKING → FINISHED
+  │         │          │
+  ├── ABNORMAL ────────┤
+  ├── DIFCANCELED ────┤
+  └── CANCELED ───────┤
+```
+
+**波次拣货方式**:
+| 类型 | 说明 |
+|------|------|
+| WORK_BY_RULE | 按系统规则分配 |
+| WORK_BY_GENERAL | 提总拣货 |
+| WORK_BY_FRUIT | 摘果拣货 |
+| WORK_BY_WEIGH_GENERAL | 提总称重 |
+| WORK_BY_SORTING | 边拣边分 |
+
+### 25.4 波次分配逻辑 (WaveAllocationServiceImpl)
+
+**核心方法**:
+| 方法 | 说明 |
+|------|------|
+| `manualAllocateAdvice()` | 手工分配建议 |
+| `manualAllocationConfirm()` | 手工分配确认 |
+| `autoAllocationByWave()` | 自动分配(按波次) |
+| `autoAllocationByWaves()` | 批量自动分配 |
+
+**分配校验**:
+- 临期库存校验 (`ItemExpiryDeliveryService`)
+- 库存冻结状态校验
+- 小数位校验
+
+### 25.5 自动波次 (AutoCreateWaveJob)
+
+**执行频率**: 每3分钟 (cron: `0/10 * * * * ?`，代码中已注释)
+
+**流程**:
+1. 获取仓库列表，遍历每个仓库
+2. 获取Redis分布式锁
+3. 调用 `basicDataService.getAutoWaveCollection()` 获取自动波次任务配置
+4. 校验常规订单/补货订单是否配置自动创建波次
+5. 调用EDI接口确认未推送订单是否存在
+6. 查询满足条件的NEW状态订单
+7. 调用 `waveService.manualCreateWave()` 创建波次
+8. 若配置自动分配，调用 `waveAutoAllocationService.autoAllocationByWaves()`
+
+---
+
+## 26. 入库收货与上架业务体系
+
+### 26.1 核心代码定位
+
+**收货模块 (inbound-service)**:
+| 类名 | 文件路径 |
+|------|---------|
+| `InboundReceiveController` | `biz/controller/InboundReceiveController.java` |
+| `InboundReceiveServiceImpl` | `biz/service/impl/InboundReceiveServiceImpl.java` |
+| `RcptTaskServiceImpl` | `biz/service/impl/RcptTaskServiceImpl.java` |
+| `BlindReceiveServiceImpl` | `biz/service/impl/BlindReceiveServiceImpl.java` |
+| `InboundOneCarManyOrderServiceImpl` | `biz/service/impl/InboundOneCarManyOrderServiceImpl.java` |
+
+**上架模块 (inbound-service)**:
+| 类名 | 文件路径 |
+|------|---------|
+| `PutawayController` | `biz/controller/PutawayController.java` |
+| `PutawayServiceImpl` | `biz/service/impl/PutawayServiceImpl.java` |
+| `AgvApiServiceImpl` | `biz/service/impl/agv/AgvApiServiceImpl.java` |
+| `AgvGetTargetLocChainService` | `biz/service/impl/agv/putaway/AgvGetTargetLocChainService.java` |
+
+### 26.2 RF收货流程
+
+```
+1. scanPoNumber()        - 输入/扫描PO单号
+   ↓
+2. scanPalletNumber()   - 输入/扫描托盘号
+   ↓
+3. scanItemCode()        - 输入/扫描商品编码
+   ↓
+4. inputReceivedNumber() - 输入收货数量
+   ↓
+5. confirmReceived()     - RF收货确认(核心)
+```
+
+**confirmReceived 核心流程**:
+1. 校验余料超发占用
+2. 校验越库托盘
+3. 校验托盘商品等级
+4. 校验箱柜合同号和生产商
+5. 溯源码校验
+6. 封存校验 (`blockedCheck`)
+7. 判断是否余料超发
+8. 保存上架单 (`persistentPutaway`)
+9. 更新入库单头状态 (`coreUpdateStatus`)
+10. 保存库存记录 (`persistentStoredItem`)
+11. 质检降级接收处理
+12. AGV搬运任务创建
+
+### 26.3 收货状态机
+
+**TaskStatusEnum** (收货任务):
+| 枚举值 | 含义 |
+|--------|------|
+| AWAIT | 待收货 |
+| RECEIVING | 部分收货 |
+| RECEIVED | 收货完成 |
+| CANCELED | 取消 |
+
+**InboundStatusEnum** (入库单):
+| 枚举值 | 含义 |
+|--------|------|
+| NEW | 新建 |
+| RECEIVING | 部分收货 |
+| RECEIVED | 收货完成 |
+| CLOSE | 关闭 |
+| CANCELED | 取消 |
+
+### 26.4 上架流程
+
+```
+1. scanPalletNumber()   - 扫描托盘号
+   ↓
+2. suggestLocation()    - 推荐库位(拣货位+目标库位)
+   ↓
+3. confirmLocation()    - 确认目标库位
+   ↓
+4. confirmPallet()     - 确认托盘上架
+```
+
+### 26.5 AGV上架责任链
+
+```
+AgvGetTargetLocChainService.putAndCrossProcess()
+         ↓
+AbstractAgvGetTargetLocHandler[] (按order排序)
+    ├── Handler1: AgvGetPutStorageImpl1     - 获取上架库
+    ├── Handler2: AgvItemVolumeCalculatorImpl2 - 体积计算
+    ├── Handler3: AgvGetTargetLocCrossImpl3  - 获取越库目标库位
+    ├── Handler4: AgvGetTargetLocCrossPutAreaImpl4 - 获取越库放置区
+    ├── Handler5: AgvGetMiddleLocImpl5       - 获取中间库位
+    └── Handler6: AgvGetEmptyLocImpl6        - 获取空库位
+```
+
+### 26.6 收货关键校验
+
+| 校验项 | 方法 | 错误码 |
+|--------|------|--------|
+| 托盘占用 | `palletOccupied()` | `RF_PALLET_HAS_OTHER_LOC_TYPE` |
+| 温层一致性 | `checkLayerIsSame()` | `RF_LAYER_IS_SAME` |
+| 商品等级 | `checkItemGrade()` | `RF_CHECK_GRADE_FAIL` |
+| 保质期天数 | `validateShelfLifeDay()` | `THE_SHELF_LIFE_DAYS_IS_INCONSISTENT...` |
+| 封存校验 | `blockedCheck()` | `RF_RECEIVE_SEALED_UP` |
+
+---
+
+## 27. 质检与损耗管理体系
+
+### 27.1 质检业务 (inbound-service)
+
+**核心代码定位**:
+| 类名 | 说明 |
+|------|------|
+| `QualityInspectionController` | PC端质检 |
+| `QualityInspectionTaskServiceImpl` | 质检任务服务 |
+| `QualityInspectionRecordServiceImpl` | 质检记录服务 |
+| `RcptQualityInspectionServiceImpl` | 收货质检服务 |
+| `QualityInspectionCertificate` | 质检证件记录 |
+| `QualityInspectionImage` | 质检图片记录 |
+
+**质检类型**:
+| 类型 | 说明 |
+|------|------|
+| 来料质检 (RcptQualityInspection) | 收货时的质检流程 |
+| 发货质检/直发质检 | 直发订单的质检 |
+
+**质检状态** (QualityInspectionStatusEnum):
+| 枚举值 | 含义 |
+|--------|------|
+| NO_NEED | 无需质检 |
+| PENDING | 待质检 |
+| PARTIALLY | 部分质检 |
+| DONE | 质检完成 |
+
+**质检流程**:
+```
+收货任务创建 → 质检任务创建 → 质检执行 → 质检结果记录 → 收货确认
+                              ↓
+                    合格/不合格/降级接收
+```
+
+### 27.2 损耗管理 (storage-service)
+
+**核心代码定位**:
+| 类名 | 说明 |
+|------|------|
+| `DamageStorageManageController` | 损耗管理 |
+| `DamageStorageManageServiceImpl` | 损耗主服务 |
+| `DamageStorageManageDetailServiceImpl` | 损耗明细服务 |
+| `DamageStorageRecordServiceImpl` | 损耗记录服务 |
+| `DamageStorageJobServiceImpl` | 损耗定时服务 |
+| `OAWorkFlowFeign` | OA审批Feign |
+
+**损耗分类** (DamageStorageHandleMethodEnum):
+| 类型 | 说明 |
+|------|------|
+| damage | 报损 |
+| sale | 售卖 |
+| meal | 降级做员工餐 |
+| vendor | 退供应商 |
+| other | 其它 |
+
+**损耗状态机**:
+```
+未处理(untreated) → 部分处理(partiallyTreated) → 已处理(processed)
+       ↑                                          ↓
+       └────────────── 定时刷新 ←─────────────────┘
+```
+
+**损耗流程**:
+```
+报损触发(出库拣货残品) → 损耗记录创建 → 定时任务刷新状态 → OA审批 → 执行处理
+                                ↓
+                         报损/售卖/员工餐/退供应商
+```
+
+### 27.3 OA审批流程
+
+```java
+// OAWorkFlowFeign
+startProcess()           // 发起工作流流程
+processingTasks()        // 流程审批通过
+rejecTask()             // 流程审批驳回
+terminateAndRecordByProc() // 流程作废
+queryRunTask()          // 查询当前正在运行的任务
+```
+
+---
+
+## 28. 定时任务与分布式锁体系
+
+### 28.1 定时任务清单
+
+**outbound-service Job**:
+| 类名 | 功能 | 执行周期 |
+|------|------|---------|
+| AutoCreateWaveJob | 自动创建波次 | 每3min (实际被注释) |
+| SendSortTasksJob | 分拣数据下发 | 每3min |
+| TaskLockUserCleanJob | 清空任务占用人(防死锁) | 每5min |
+| AsyncTaskDeleteJob | 异步任务删除 | — |
+| AsyncTaskExecuteJob | 异步任务执行 | — |
+| CountPickRecordInfoJob | 统计拣货记录 | — |
+| PushStatisticsJob | 推送统计 | — |
+| TaskDepartureWaveJob | 任务出发波次 | — |
+
+**storage-service Job**:
+| 类名 | 功能 | 执行周期 |
+|------|------|---------|
+| SendExpiredStoredJob | 过期预警报表发送 | cron配置 |
+| InventoryCollectJob | WMS与SAP双系统库存差异核对 | 每天12:35 |
+| RefreshProduceDateJob | 刷新保质期天数 | cron配置 |
+| DamageStorageStatusRefreshJob | 不合格品状态刷新 | 每10min |
+| GetPutawayRecordJob | 获取上架记录 | cron配置 |
+| GetStoredSnapshotJob | 获取库存快照 | cron配置 |
+| RefreshItemVolumeStorageJob | 刷新商品标准体积 | 每天7:30 |
+| OutboundWarningSyncJob | 同步预警信息 | 每天0:30 |
+
+### 28.2 分布式锁配置
+
+**锁超时配置**:
+| 配置项 | 值 | 位置 |
+|--------|-----|------|
+| COUNT_LOCK_TIME | 900秒 | RedisConstant.java |
+| REDIS_LOCK_OUT_TIME | 50秒 | CommonConstant.java |
+| REDIS_LOCK_LONGEST_WAIT_TIME | 3秒 | CommonConstant.java |
+| GlobalLockHelper.WAIT_TIME | 10秒 | GlobalLockHelper.java |
+| GlobalLockHelper.OUT_TIME | -1L(永不过期) | GlobalLockHelper.java |
+
+### 28.3 锁粒度 (RedisKeyEnum)
+
+```java
+w_outbound_master      // 出库单
+w_outbound_detail_expand // 出库单明细
+w_vacancy_task        // 报缺
+w_sort_task           // 分拣任务
+w_async_task          // 异步任务
+w_stored_item         // 库存
+w_supplier_sale       // 直发分拣
+```
+
+### 28.4 锁前缀 (RLockPrefixConstant)
+
+```java
+WAVEMASTER_           // 波次Id锁
+ALLOCATELOCK_         // 商品分配锁
+CREATEPICKTASKDOC_    // 创建拣货任务波次id锁
+CROSSCONFIRM_         // 越库商品id锁
+LOADMASTER_           // 装车单Id锁
+GENERAL_TASK_LOCK_    // 提总任务ID锁
+FRUIT_TASK_LOCK_      // 摘果任务ID锁
+BEEF_TASK_LOCK_       // 牛肉类锁前缀
+UNPLAN_TASK_LOCK_     // 无计划锁前缀
+```
+
+### 28.5 死锁预防 (TaskLockUserCleanJob)
+
+**清理内容**:
+1. 提总任务占用人清理
+2. 摘果任务占用人清理
+3. 不合格品出库任务占用人清理
+4. 牛肉类任务占用人清理
+5. 拦截取货任务占用人清理
+6. 波次分配执行中状态重置
+7. RF分拣任务占用人重置
+
+**配置时间**: 默认25分钟前的占用信息会被清理

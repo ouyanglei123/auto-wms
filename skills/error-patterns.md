@@ -255,6 +255,56 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 300-399 | 出库/订单 | `OutboundConstant.java` |
 | 400-499 | 质检模块 | `QualityInspection*Enum.java` |
 
+### 6.20 出库订单与波次业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 波次创建失败 | 出库单状态非NEW | 检查 `CreateWaveServiceImpl` 状态前置校验 |
+| 分配失败-库存不足 | 库存被冻结或数量不足 | 检查 `WaveAllocationServiceImpl` 的冻结过滤 |
+| 波次自动创建未触发 | AutoCreateWaveJob未执行或锁超时 | 检查 `t_elastic_job_property` 表cron + Redis锁 |
+| 订单无法取消 | 订单已建波次或已分配 | 检查 `OutboundMasterServiceImpl.outboundCancel()` 状态校验 |
+| 拣货数量不匹配 | 分配后库存变动 | 检查 `PickTaskGeneralServiceImpl` + 锁机制 |
+| 分拣任务下发失败 | 客户绑定分拣位配置缺失 | 检查 `BasicDataService.selectSortBindedConfigInfo()` |
+
+### 6.21 入库收货与上架业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| RF收货超时/锁失败 | 收货单号分布式锁900s未释放 | 检查 `InboundReceiveController.confirmReceived()` 锁内逻辑 |
+| 收货报 `no such unit` | 商品单位在basicdata中不存在 | 检查 `rcpt_task_detail.inbound_unit_id → basicdata.item_unit` |
+| 盲收失败 | 托盘商品温层不一致 | 检查 `BlindReceiveServiceImpl.checkStoredItemForItem()` |
+| 一车多单添加失败 | 任务在其他关联订单中存在 | 检查 `InboundOneCarManyOrderServiceImpl` 校验逻辑 |
+| 上架推荐库位为空 | 温层过滤或体积计算失败 | 检查 `PutawayServiceImpl.suggestLocation()` 温层校验 |
+| AGV上架任务失败 | 未维护上架推荐区域配置 | 检查 `PlacementAdviceServiceImpl` handle50() |
+| 越库商品未及时分配 | 越库触发自动分配失败 | 检查 `outBoundClient.afterPutawayAutoAllocation()` |
+
+### 6.22 质检与损耗业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 质检状态不更新 | 质检任务状态机异常 | 检查 `QualityInspectionStatusEnum` 状态流转 |
+| 质检放行失败 | 证件审核未通过 | 检查 `QualityInspectionCertificate` 记录 |
+| 收货报质检异常 | 质检任务创建失败 | 检查 `RcptQualityInspectionServiceImpl` |
+| 损耗状态不更新 | `DamageStorageStatusRefreshJob` 未执行 | 检查 `w_damage_storage_job` 表记录 |
+| 报损数量超出库存 | 拣货残品数量与报损不一致 | 检查 `PickTaskDetailUnPlanServiceImpl.addDamageStorageByPuo3()` |
+| OA审批流未触发 | WorkFlow配置缺失 | 检查 `OAWorkFlowFeign.startProcess()` 日志 |
+| 损耗与效期关联丢失 | `batchAttributes.damageStorageId` 未更新 | 检查 `DealDamageReq` 处理逻辑 |
+| 品级变更失败 | 品级转换规则校验 | `ItemGradeChangeServiceImpl` 校验 isExpired + gradeCode 耦合规则 |
+
+### 6.23 定时任务与分布式锁问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| AutoCreateWaveJob未执行 | Redis锁未释放/Job配置错误 | 检查 `t_elastic_job_property` 表cron配置 |
+| 分片不均 | AverageAllocationJobShardingUtil计算错误 | 检查仓库数量与分片数 |
+| Job执行超时 | 锁超时900s | 检查 `GlobalLockHelper` 锁状态 |
+| Job依赖链断裂 | 上游Job失败导致下游未触发 | 检查 `w_auto_wave_task` 状态 |
+| 获取锁失败 | 3秒内未获取Redis锁 | 检查 `CodeServiceImpl` 锁参数(50s超时) |
+| 任务堆积 | Job执行时间超过cron间隔 | 检查任务内是否有慢查询/远程调用 |
+| 死锁(用户被锁定) | 拣货任务卡住，用户无法操作 | `TaskLockUserCleanJob` 会自动清理25分钟前的占用 |
+| 库存数据不一致 | 多个Job同时操作同一库存 | 检查 `w_stored_item` 锁是否正确获取 |
+
+
 ## 修复策略模板
 
 当 build-fix Agent 遇到错误时，按以下优先级尝试：
