@@ -73,8 +73,84 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 4. **版本回退**：`git stash` 暂存改动，验证是否是最近引入的
 5. **搜索引擎**：通过 brave-search/tavily MCP 搜索错误信息
 
+## 6. WMS 专属错误模式
+
+### 6.1 Feign 调用失败
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| `FeignException: status 500` | 被调用服务内部异常 | 查被调服务的 Feign Controller(api/) + Hystrix 降级 |
+| `FeignException: status 404` | Feign 接口路径不匹配 | 对比 FeignClient @RequestMapping 和目标 Controller |
+| `HystrixRuntimeException: timed out` | 被调服务响应超时 | 检查目标 Service 是否有大查询/死锁，调整 hystrix.timeout |
+| `Load balancer does not have available server` | 目标服务未注册到 Eureka | 检查目标服务启动状态 + Eureka 注册 |
+| `Feign retry exhausted` | 网络抖动或服务不可用 | 检查 Ribbon 重试配置 + 目标服务健康 |
+
+### 6.2 分布式锁问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 业务并发导致数据不一致 | 锁粒度不够或未加锁 | 搜索 `GlobalLockHelper` / `Redisson RLock` 确认锁范围 |
+| `Redisson lock timeout` | 业务执行超900s | 检查锁内逻辑是否有慢查询/远程调用 |
+| 死锁 | 锁未释放(异常未unlock) | 检查 try-finally 是否包裹 `lock.unlock()` |
+
+### 6.3 MQ 消息问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 消息未消费 | Consumer Group 配置错误 | 检查 `@RocketMQMessageListener` 的 topic/tag/consumerGroup |
+| 重复消费 | 消费失败重试 | 检查消费逻辑是否幂等(查 StoredItem / MoveDetail 唯一约束) |
+| 事务消息不一致 | 本地事务成功但MQ未提交 | 检查 `AbstractRocketMQLocalTransactionListener` 的 executeLocalTransaction |
+| 消息堆积 | 消费速度跟不上 | 检查 Consumer 是否有慢操作，考虑批量消费 |
+
+### 6.4 分库分表问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| `ShardingException` | 分片键缺失或路由错误 | 检查 SQL 是否包含分片键(tenantCode) |
+| 跨库查询失败 | 不支持跨分片JOIN | 改为单分片查询或使用 ShardingSphere 广播表 |
+| 分页查询慢 | 深度分页跨分片合并 | 优化为游标分页或限制分页深度 |
+
+### 6.5 Apollo 配置问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| `@Value` 注入 null | namespace 未配置或 key 错误 | 检查 Apollo namespace(application/shsc-wms-sharding-jdbc/shsc-wms-common) |
+| 配置变更不生效 | 未触发 @RefreshScope | 检查 Bean 是否有 `@RefreshScope` 注解 |
+
+### 6.6 业务逻辑常见问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 出库分配失败 | 库存不足或冻结 | 检查 `WaveAllocationServiceImpl` + `StoredItemServiceImpl` |
+| 波次创建失败 | 出库单状态不对(非NEW) | 检查 `CreateWaveServiceImpl` 状态前置校验 |
+| 拣货数量不匹配 | 分配后库存变动 | 检查 `PickTaskGeneralServiceImpl` + 锁机制 |
+| 上架推荐库位失败 | 库位载入规则不匹配 | 检查 `AgvGetTargetLocChainService` 责任链 |
+| 盘点盈亏异常 | 盘点期间有出入库操作 | 检查 `CountLocationLockServiceImpl` 锁范围 |
+| 收货数量校验失败 | 超出PO数量 | 检查 `RcptTaskServiceImpl` 数量校验逻辑 |
+| 编码生成失败 | 编码规则配置缺失或序列号耗尽 | 检查 `CodeServiceImpl` + BasicDataClient |
+
+### 6.7 WMS 错误码速查
+
+| 错误码范围 | 所属模块 | 定位文件 |
+|-----------|---------|---------|
+| 500-599 | 通用/基础 | `BasicdataErrorCode.java` |
+| 100-199 | 收货模块 | `InboundErrorCode.java` |
+| 200-299 | 上架模块 | 各服务的 `ErrorCodeDefine.java` |
+| 300-399 | 出库/订单 | `OutboundConstant.java` |
+| 400-499 | 质检模块 | `QualityInspection*Enum.java` |
+
+## 修复策略模板
+
+当 build-fix Agent 遇到错误时，按以下优先级尝试：
+
+1. **精确匹配**：在上方表格中搜索错误关键词
+2. **模式匹配**：提取错误文件名+行号，Read 该位置，分析根因
+3. **依赖检查**：`npm ls` 检查依赖树是否完整
+4. **版本回退**：`git stash` 暂存改动，验证是否是最近引入的
+5. **搜索引擎**：通过 brave-search/tavily MCP 搜索错误信息
+
 ## 与 auto-wms 集成
 
-- `/auto:build-fix` 自动加载此知识库
+- `/wms:auto` 自动加载此知识库和 `wms-domain.md`
 - quest-designer 在设计 Quest 时可参考反模式警告
 - hooks 中的 TypeScript 检查和 Prettier 自动修复可参考此知识库
