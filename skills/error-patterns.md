@@ -182,7 +182,43 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | AT模式不支持的操作 | 执行了无主键DELETE/跨库JOIN | 检查 `CustomRMHandler` 自定义处理 |
 | 嵌套事务不生效 | 传播行为配置错误 | 检查 Spring `@Transactional(propagation=)` 配置 |
 
-### 6.12 WMS 错误码速查
+### 6.12 库存冻结/解冻问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 重复冻结 | 已冻结的库存再次冻结 | 检查 `doStorageFreeze()` 重复校验逻辑 |
+| 封存商品无法解冻 | freezeReason含"封存"字样 | 检查 `StoredItemServiceImpl.doStorageFreeze()` 第xxx行 |
+| 冻结库存被分配 | freezeSign检查未生效 | 检查 `WaveAllocationServiceImpl` 的冻结过滤 |
+| 盘点冻结未回滚 | 取消盘点时status未恢复AVAILABLE | 检查 `CountCancelRpc` 库存处理 |
+
+### 6.13 损耗管理问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 损耗状态不更新 | DamageStorageStatusRefreshJob未执行 | 检查 `w_damage_storage_job` 表记录 |
+| 报损数量超出库存 | 拣货残品数量与报损不一致 | 检查 `PickTaskDetailUnPlanServiceImpl.addDamageStorageByPuo3()` |
+| OA审批流未触发 | WorkFlow配置缺失 | 检查 `OAWorkFlowFeign.startProcess()` 日志 |
+| 损耗与效期关联丢失 | batchAttributes.damageStorageId未更新 | 检查 `DealDamageReq` 处理逻辑 |
+
+### 6.14 定时任务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| AutoCreateWaveJob未执行 | Redis锁未释放/Job配置错误 | 检查 `t_elastic_job_property` 表cron配置 |
+| 分片不均 | AverageAllocationJobShardingUtil计算错误 | 检查仓库数量与分片数 |
+| Job执行超时 | 锁超时900s | 检查 `GlobalLockHelper` 锁状态 |
+| Job依赖链断裂 | 上游Job失败导致下游未触发 | 检查 `w_auto_wave_task` 状态 |
+
+### 6.15 温层校验问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 移位被拒绝-温层不一致 | 库位温层≠商品温层 | 检查 `MoveBdServiceImpl.moveBdLocForthConfirm()` 第521行 |
+| 上架推荐库位为空 | 温层过滤过于严格 | 检查 `PutawayServiceImpl.suggestLocation()` 温层校验 |
+| 新零售温层校验绕过 | NEW_RETAIL类型独立产线 | 检查 `LocationTypeEnum.NEW_RETAIL` 判断逻辑 |
+| 温层删除失败 | 库区/商品已引用 | 检查 `WarmLayerServiceImpl.deleteWarmLayerById()` 引用校验 |
+
+### 6.16 WMS 错误码速查
 
 | 错误码范围 | 所属模块 | 定位文件 |
 |-----------|---------|---------|

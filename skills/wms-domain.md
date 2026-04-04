@@ -938,7 +938,165 @@ Phase 2: 回滚阶段
 
 ---
 
-## 16. 数据量级
+## 16. 库存冻结/解冻机制
+
+### 16.1 冻结场景总览
+
+| 场景 | 触发位置 | 冻结类型 | 核心字段 |
+|------|---------|---------|---------|
+| 盘点冻结(明盘) | CountRpcHandler17 | 状态锁定 | status=UNAVAILABLE, reason=INVENTORY_LOCK |
+| 封存商品冻结 | BlockedItemServiceImpl | freezeSign冻结 | freezeSign=true, freezeReason |
+| 补货锁定 | ReplenishServiceImpl | 不可用锁定 | reason=REPLENISH_LOCK |
+| 移位锁定 | MoveBdServiceImpl | 不可用锁定 | reason=MOVE_LOCK |
+| 报缺锁定 | OutboundFeignService | 不可用锁定 | reason=VACANCY_LOCK |
+
+### 16.2 核心字段关系
+
+```
+freezeSign (冻结标志) vs status (库存状态) - 独立概念
+├── freezeSign: 1=冻结, 0=解冻 (封存商品)
+└── status: AVAILABLE/UNAVAILABLE (业务锁定)
+    └── reasonUnavailability: INVENTORY_LOCK/REPLENISH_LOCK/MOVE_LOCK/...
+```
+
+### 16.3 冻结对业务的影响
+
+| 业务 | freezeSign冻结 | status=UNAVAILABLE |
+|------|---------------|---------------------|
+| 分配 | 不允许分配 | 不允许分配 |
+| 拣货 | 冻结库存不允许 | 锁定库存不允许 |
+| 移位 | 可操作(内部流转) | 不可操作 |
+
+### 16.4 错误码速查
+
+| 错误码 | 说明 |
+|--------|------|
+| ST_500040004 | 库存已经是冻结状态 |
+| ST_500040005 | 库存已经是解冻状态 |
+| ST_503000025 | 封存商品不能单独解冻 |
+| ST_500010003 | 库存为冻结状态不允许操作 |
+| ST_500090027 | 库存不可用不允许操作 |
+
+---
+
+## 17. 损耗管理体系
+
+### 17.1 损耗全流程
+
+```
+报损(出库触发) → 损耗记录 → 定时刷新状态 → 审批 → 执行
+                   ↓
+              w_damage_storage_manage
+              w_damage_storage_record
+```
+
+### 17.2 触发场景
+
+| 触发方式 | 位置 | 说明 |
+|---------|------|------|
+| PUO3报损 | PickTaskDetailUnPlanServiceImpl | 残品拣货时触发 |
+| 配置触发 | Apollo配置 | wms.outbound.damage.storage.bill.code |
+
+### 17.3 损耗状态机
+
+```
+untreated(未处理) → partiallyTreated(部分处理) → processed(已处理)
+```
+
+### 17.4 OA审批集成
+
+```java
+OAWorkFlowFeign.startProcess()  // 发起审批
+OAWorkFlowFeign.processingTasks()  // 审批通过
+OAWorkFlowFeign.rejecTask()  // 审批驳回
+```
+
+### 17.5 效期关联
+
+- 损耗商品通常是过期/临期商品
+- 效期预警 → 临期/过期/呆滞/滞销/残品
+
+---
+
+## 18. 定时任务（ElasticJob）体系
+
+### 18.1 Job总览
+
+| 服务 | Job数量 | 核心Job |
+|------|--------|---------|
+| outbound | 14 | AutoCreateWaveJob(每3min) |
+| inside | 14 | WmsInsideTaskCreateJob |
+| storage | 13 | InventoryCollectJob(每天12:35) |
+| edi | 30+ | InOutToSapJob, WorkBenchJob |
+| inbound | 5 | ZfInspectionTaskJob |
+| basicdata | 5 | ItemBoxUnitWarningJob |
+
+### 18.2 核心Job
+
+**AutoCreateWaveJob (出库波次)**:
+```
+每3分钟 → 获取仓库列表 → 获取Redis锁 → 创建波次 → 自动分配
+```
+
+**InventoryCollectJob (库存汇总)**:
+```
+每天12:35 → 删除历史 → 汇总库存 → 更新收货数量 → 回传核对
+```
+
+**WmsInsideTaskCreateJob (库内任务)**:
+```
+参数化触发 → 同批次移位/呆滞移位/高低层/例常补货/过期移位
+```
+
+### 18.3 分片策略
+
+```java
+// 均分策略: AverageAllocationJobShardingUtil
+// 按仓库均分到各分片执行
+```
+
+### 18.4 依赖关系
+
+```
+AutoCreateWaveJob → 波次创建 → TaskDepartureWaveJob → SendSortTasksJob
+                                                    ↓
+ReplenishPrioritySortJob ← WmsInsideTaskCreateJob → OutboundFeignService
+```
+
+---
+
+## 19. 温层管理体系
+
+### 19.1 温层数据结构
+
+```
+w_warm_layer: tempCode, tempName, deliveryTemperature(常温/冷藏/冷冻)
+```
+
+### 19.2 温层关联链
+
+```
+商品(ItemMaster.tempId) → 温层(WarmLayer.id)
+库位(Location.zoneId) → 库区(Zone.tempId) → 温层(WarmLayer.id)
+```
+
+### 19.3 温层校验场景
+
+| 场景 | 校验位置 | 校验逻辑 |
+|------|---------|---------|
+| 移位 | MoveBdServiceImpl:521 | 库位温层=商品温层 |
+| 上架 | PutawayServiceImpl:976 | 库位温层=商品温层 |
+| 新零售 | 独立产线 | 绕过常规校验 |
+
+### 19.4 错误码
+
+| 错误码 | 说明 |
+|--------|------|
+| INSIDE_40_005_0110 | 库位温层和商品温层不一致 |
+
+---
+
+## 20. 数据量级
 
 | 服务 | Controller | ServiceImpl | Entity | Feign | MQ | Job | Enum |
 |------|-----------|-------------|--------|-------|-----|-----|------|
