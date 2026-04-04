@@ -83,6 +83,20 @@ Glob("package.json") / Glob("pom.xml") / Glob("go.mod") / Glob("requirements.txt
 Glob("CLAUDE.md") → Read（如存在）
 ```
 
+### 1.1a WMS 领域知识自动加载（项目身份检测）
+
+```
+IF package.json 中 name 包含 "wms" 或 skills/wms-domain.md 存在：
+  Read("skills/wms-domain.md")   → 加载完整代码定位索引到主上下文
+  Read("skills/error-patterns.md") → 加载 WMS 错误模式到主上下文
+  → 输出: "WMS 领域知识已加载: 6 服务, 448 Ctrl, 581 Svc, 477 Entity, 83 MQ, 52 Job"
+ELSE:
+  跳过（非 WMS 项目）
+```
+
+> 设计意图：WMS 领域知识是本项目的核心资产，必须在 PHASE 1 就加载到主上下文，
+> 而不是等 PHASE 2 按需加载。这样 quest-designer 在分析时已有完整的服务→类名映射。
+
 ### 1.2 能力清单收集（并行 Glob + Grep 提取 frontmatter，禁止 Read 完整文件）
 
 ```
