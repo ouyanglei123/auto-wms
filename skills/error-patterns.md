@@ -130,8 +130,30 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 编码生成失败 | 编码规则配置缺失或序列号耗尽 | 检查 `CodeServiceImpl` + BasicDataClient |
 | 收货报 `no such unit` | 商品单位(inboundUnitId)在basicdata中不存在 | 检查 `QualityInspectionRcptServiceImpl:520`，查 rcpt_task_detail.inbound_unit_id → basicdata.item_unit |
 | 移位解绑拣货位时数量/单位不匹配 | safeFlag=true时itemUnit被替换为safeItemUnit | `MoveBdServiceImpl.moveBdLocForthConfirm()` 第654-657行，不应该在移位时替换单位 |
+| RF收货超时/锁失败 | 收货单号分布式锁900s未释放 | 检查 `InboundReceiveController.confirmReceived()` 锁内逻辑是否有慢查询 |
+| AGV上架库位冲突 | 库位被其他任务预占 | 检查 `AbstractAgvGetTargetLocHandler.locationAgvTaskFilter()` |
+| 越库商品未及时分配 | 越库触发自动分配失败 | 检查 `outBoundClient.afterPutawayAutoAllocation()` |
 
-### 6.7 WMS 错误码速查
+### 6.7 批次效期问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 临期库存被分配出库 | 临期管控未生效/配置错误 | 检查 `WaveAllocationServiceImpl` 的临期过滤逻辑 |
+| 批次分配不均 | 波次生产日期定位策略配置不当 | 检查 `WaveProduceDatePositionServiceImpl` 的 allocateFlowDirection 规则 |
+| 效期预警数据不准确 | 定时刷新Job未执行 | 检查 `AsyncRefreshStoredItemPreWarningJob` 执行状态 |
+| 过期品转良品失败 | 品级转换规则校验 | `ItemGradeChangeServiceImpl` 校验 isExpired + gradeCode 耦合规则 |
+
+### 6.8 EDI对接问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 出库回传GAIA失败 | SOAP超时/GAIA接口不可用 | 检查 `wms_all_interface_log` 表的 return_message |
+| MQ消息未消费 | Consumer Group配置错误 | 检查 `@RocketMQMessageListener` 的 topic/tag/consumerGroup |
+| 重复消费 | 消费失败未确认 | 检查 `w_callback` 表是否有重复记录 |
+| 入库回传失败 | 收货任务状态非COMPLETE | 检查 `InboundCallbackBatchInfoServiceImpl` 收货状态校验 |
+| 奈雪单位转换失败 | pieceLoad为null | 检查 `basicdata.item_unit` 表的 piece_load 字段 |
+
+### 6.9 WMS 错误码速查
 
 | 错误码范围 | 所属模块 | 定位文件 |
 |-----------|---------|---------|

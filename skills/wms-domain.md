@@ -536,7 +536,236 @@ basicInputMoveQty = inputMoveQty × pieceLoad
 
 ---
 
-## 9. 数据量级
+## 10. 入库全流程（inbound）服务调用详解
+
+### 10.1 完整链路：订单 → 收货 → 质检 → 上架 → AGV
+
+```
+【阶段1: 订单进入】
+EDI/SAP → InboundMaster(NEW) → InboundDetail
+         ↑
+         └─ Feign: EdiClient.getIsExistNoPushWmsOrder()
+
+【阶段2: 创建收货任务】PC端触发
+InboundReceiveController.createOrdinaryTask()
+         ↓
+RcptTaskService.saveRcptTask() → RcptTaskEntity(AWAIT)
+InboundMaster状态: NEW → RECEIVING
+
+【阶段3: RF收货】手持设备触发
+InboundReceiveController.confirmReceived()
+         ↓
+StoreItemClient.inSaveStoredItemByLock() → storage服务 入库库存增加
+         ↓
+RcptTaskEntity状态: AWAIT → RECEIVING → RECEIVED
+InboundMaster状态: RECEIVING → RECEIVED
+
+【阶段4: 质检】可选阶段
+QualityInspectionController.qualityInspectionConfirmed()
+    ├── 合格品 → 进入上架流程
+    └── 让步接收(降级) → 特殊处理
+
+【阶段5: AGV上架】
+AgvApiController.putAndCrossAutoWaveAlloc()
+         ↓
+AgvGetTargetLocChainService.putAndCrossProcess() 责任链获取目标库位
+         ↓
+PutawayServiceImpl.agvConfirmPallet() AGV任务完成确认
+         ↓
+StoreItemClient.inSaveStoredItemByLock() → storage服务 库存上架
+
+【阶段6: 完成】
+InboundMaster状态: RECEIVED → CLOSE
+```
+
+### 10.2 RF收货核心逻辑
+
+```java
+// InboundReceiveController.confirmReceived()
+public DataResponseEntity<?> confirmReceived(RfConfirmReceivedReq dto) {
+    // 1. 米村客户NB订单加锁
+    mcCloseReceiveService.addRedisOccupy(dto.getOrderNumber());
+
+    // 2. 获取分布式锁 (LOCK_TIME=900s)
+    RLock receiveLock = redisLockUtil.getRedisLock(receiveKey, lockType, TimeUnit.SECONDS, outTime, null);
+
+    // 3. 效期校验 (isExpiredDate=true时)
+    validateHelperService.checkCurrentPalletStoredExpiredDate(...);
+
+    // 4. 生产日期校验 (isProduction=true时)
+    validateHelperService.checkCurrentPalletStoredProductDate(...);
+
+    // 5. 确认收货 → storage服务增加库存
+    StoreItemClient.inSaveStoredItemByLock(dtoList);
+}
+```
+
+### 10.3 AGV上架责任链模式
+
+```
+AgvGetTargetLocChainService.putAndCrossProcess()
+         ↓
+AbstractAgvGetTargetLocHandler[] (按order排序)
+    ├── Handler1 (order=0)
+    ├── Handler2 (order=1)
+    ├── Handler3 (order=2)
+    └── ...
+
+// 越库流程: crossAutoWaveAllocProcess 只执行 order <= 3 的处理器
+```
+
+### 10.4 入库 vs 出库 本质区别
+
+| 维度 | 入库 (Inbound) | 出库 (Outbound) |
+|------|---------------|-----------------|
+| 驱动方向 | 被动接收 (PO→收货) | 主动执行 (SO→波次→拣货) |
+| 库存变化 | +库存 (增加) | -库存 (扣减) |
+| 时效要求 | 收货时效宽松 | 拣货时效紧迫 |
+| 核心锁 | 收货单号锁 (Redisson 900s) | 波次单号锁 (Redisson 900s) |
+| 质检介入 | 强制质检 (可选) | 无质检环节 |
+| EDI对接 | PO收货回传SAP | SO发运回传 |
+
+---
+
+## 11. 批次属性与效期管理体系
+
+### 11.1 批次核心表结构
+
+| 表名 | 服务 | 说明 |
+|------|------|------|
+| `w_batch_attributes` | storage | 批次属性主表 |
+| `w_stored_item` | storage | 库存表，通过 batchId 关联批次 |
+| `w_move_batch_attributes` | inside | 移位记录_商品批次信息 |
+
+### 11.2 效期预警类型
+
+| 预警类型 | code | 说明 |
+|---------|------|------|
+| 临期 | ADVENT | 商品等级为良品或待鉴定 且 isAdvent=true |
+| 过期 | EXPIRED | isExpired=true |
+| 呆滞 | SLUGGISH | 前30天无出库记录且有库存 |
+| 滞销 | UNSALABLE | 累计可出库天数 > 距临期天数 |
+| 残品 | DAMAGED | 商品等级为残品 且 isExpired=false |
+
+### 11.3 保质期预警等级计算
+
+```
+int distance = 当前日期 - 生产日期;
+int oneThird = shelfLifeDays / 3;
+int oneHalf = shelfLifeDays / 2;
+int twoThird = shelfLifeDays * 2 / 3;
+
+distance >= (shelfLifeDays - 1) → 过期
+distance >= twoThird → 临期(2/3)
+distance >= oneHalf → 临期(1/2)
+distance >= oneThird → 临期(1/3)
+否则 → 正常
+```
+
+### 11.4 批次分配策略（波次生产日期定位）
+
+| 规则 | 条件 | 行为 |
+|------|------|------|
+| allocateFlowDirectionOne | 可定位数量 >= 需求数 | 所有可用非停售库存全部分配 |
+| allocateFlowDirectionTwo | 需求数 >= 可定位数量 >= 可用非停售数量 | 可用非停售全部分配，剩余作为越库数量 |
+| allocateFlowDirectionThree | 可定位数量 >= 可用非停售数量 > 需求数 | 拣货位优先 → 补货 → 存货位 |
+
+### 11.5 效期与品级耦合规则
+
+```
+商品已过期，商品等级只能为残品 (ST_500090384)
+过期的库存不能转成良品 (ST_500090032)
+```
+
+---
+
+## 12. EDI电子数据交换服务详解
+
+### 12.1 对接架构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     EDI 服务 (电子数据交换中心)                    │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐            │
+│  │ SAP接口 │  │GAIA接口 │  │TMS接口  │  │SRM接口  │            │
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘            │
+│       │             │             │             │                  │
+│       └─────────────┴──────┬─────┴─────────────┘                  │
+│                            │                                      │
+│                   ┌────────┴────────┐                            │
+│                   │   MQ消息中心    │                            │
+│                   │ WMS_INOUT_TOPIC│                            │
+│                   └────────────────┘                            │
+└─────────────────────────────────────────────────────────────────┘
+                            │
+          ┌─────────────────┼─────────────────┐
+          │                 │                 │
+          ▼                 ▼                 ▼
+    outbound(出库)    inbound(入库)    storage(库存)
+```
+
+### 12.2 GAIA双向对接
+
+| 方向 | 服务 | 方式 |
+|------|------|------|
+| WMS → GAIA | `PushGaiaServiceImpl` | HTTP调用 + MQ消息 |
+| GAIA → WMS | `ZfGaiaToWmsServiceImpl` | REST API接收 |
+
+### 12.3 出库回传完整流程 (insertInfExpPost)
+
+```
+MQ消息触发 (InOutMsgConsume)
+         ↓
+幂等校验 (RedisLock + w_callback表)
+         ↓
+保存 w_callback 表
+         ↓
+定时任务 InOutToGaiaJob 触发
+         ↓
+batchInOutToGaia() 批量回传
+    ├── SOAP报文组装
+    ├── SoapUtil.pushMessage() 调用GAIA
+    └── 更新回传状态 (SUCCESS_CALL_BACK / FAIL_CALL_BACK)
+```
+
+### 12.4 MQ消费者一览
+
+| Consumer | Topic | 用途 |
+|----------|-------|------|
+| InOutMsgConsume | WMS_INOUT_TOPIC | 出入库回传消费 |
+| CommonInOutMsgConsume | COMMON_WMS_INOUT_TOPIC | 通用出入库回传 |
+| DiffConfirmSyncConsume | - | 差异确认同步 |
+| PickUpSyncConsume | - | 拣货同步 |
+
+### 12.5 两阶段幂等保障
+
+```java
+// 第一阶段: Redis分布式锁
+String lockKey = String.format(RedisConstant.INOUT_MSG_TAGEDI_CONSUME_KEY, guid, zflag, ...);
+rLock = redisLockUtil.getRedisLock(lockKey, LockType.ReentrantLock.name(), ...);
+
+// 第二阶段: 业务数据查重
+List<CallBackEntity> list = callBackMapper.selectList(
+    qw.lambda()
+        .eq(CallBackEntity::getWarehouseCode, warehouseCode)
+        .in(CallBackEntity::getRelatedId, ids));
+// 过滤已存在数据
+inOutMessage.getInfExpPostReqs().removeAll(collect);
+```
+
+### 12.6 EDI常见问题排查
+
+| 问题 | 排查方法 |
+|------|---------|
+| 消息未消费 | 检查 @RocketMQMessageListener 的 topic/tag/consumerGroup |
+| 重复消费 | 检查 w_callback 表是否有重复记录 |
+| GAIA返回失败 | 查看 wms_all_interface_log 表的 return_message |
+| SOAP超时 | 检查 wms.edi.http.timeout 配置 |
+
+---
+
+## 13. 数据量级
 
 | 服务 | Controller | ServiceImpl | Entity | Feign | MQ | Job | Enum |
 |------|-----------|-------------|--------|-------|-----|-----|------|
