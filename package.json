@@ -14,7 +14,7 @@
     "lint:fix": "eslint src/ bin/ tests/ --fix",
     "format": "prettier --write \"src/**/*.js\" \"bin/**/*.js\" \"tests/**/*.js\"",
     "format:check": "prettier --check \"src/**/*.js\" \"bin/**/*.js\" \"tests/**/*.js\"",
-    "sync": "cp commands/*.md .claude/commands/wms/ && echo 'Synced commands/ → .claude/commands/wms/'",
+    "sync": "cp commands/wms/*.md .claude/commands/wms/ && echo 'Synced commands/wms/ → .claude/commands/wms/'",
     "prepublishOnly": "npm test",
     "prepare": "npx husky"
   },

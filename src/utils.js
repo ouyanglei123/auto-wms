@@ -138,7 +138,7 @@ export const COMPONENTS = {
   commands: {
     name: 'wms 斜杠指令',
     description: '斜杠命令（/wms:auto, /wms:route, /wms:doctor 等）',
-    source: 'commands',
+    source: 'commands/wms',
     target: 'commands/wms',
     pattern: '*.md'
   },
