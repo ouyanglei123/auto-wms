@@ -1096,7 +1096,153 @@ w_warm_layer: tempCode, tempName, deliveryTemperature(常温/冷藏/冷冻)
 
 ---
 
-## 20. 数据量级
+## 20. 货主客户管理体系
+
+### 20.1 数据结构
+
+```
+Company（货主）- 全量共享，无tenantCode
+    └── 商品表通过 companyCode 关联
+
+Customers（客户/送达方）
+    ├── companyId → Company.companyCode
+    └── collectionId → CustomerCollection
+
+CustomerCollection（客户集合）
+    └── CustomerCollectionRelation（多租户隔离绑定）
+```
+
+### 20.2 货主关键配置
+
+| 配置项 | 字段 | 影响 |
+|--------|------|------|
+| 临期限制出库 | `beRestrictExpiryDelivery` | 出库分配时过滤临期库存 |
+| 是否米村货主 | `beMcCompany` | 收货加锁逻辑 |
+| 允许超发 | `isSupperShip` | 出库数量校验 |
+| 内外销 | `businessObject` | 质检/回传策略 |
+
+### 20.3 客户集合关键配置
+
+| 配置项 | 影响 |
+|--------|------|
+| `isAutoCreateWaves` | 波次自动创建 |
+| `cpickType/bpickType` | 拣货方式(摘果/扒蛋/提总) |
+| `beRestrictExpiryDelivery` | 临期限制出库(优先级高于货主) |
+| `freezingBindingBox` | 冻品绑箱 |
+| `lcCwIsLcl` | 冷藏常温拼箱 |
+
+---
+
+## 21. 编码规则体系
+
+### 21.1 编码生成流程
+
+```
+业务服务 → BasicDataClient.getDateCode() → Redis Lock → 序列号自增
+```
+
+### 21.2 四种编码类型
+
+| 类型 | 说明 | 示例 |
+|------|------|------|
+| TENANT_PURE_NUMBER | 租户自增数字 | - |
+| PURE_NUMBER | 仓库自增数字 | - |
+| PREFIX | 带前缀自增(不重置) | - |
+| PREFIX_WITH_DATE | 带前缀+日期(每日重置) | SBWGB20260404xxxx |
+
+### 21.3 业务单号前缀
+
+| 前缀 | 业务类型 | 生成规则 |
+|------|---------|---------|
+| HL01 | 入库单 | 前缀+仓库+年月日+4位流水 |
+| SB | 收货任务 | SB+仓库+年月日+4位流水 |
+| SC | 上架单 | SC+仓库+年月日+4位流水 |
+| BY | AGV任务 | BY+5位流水(无日期) |
+| FB | 波次单 | FB+年月日+4位流水 |
+| FA | 出库单 | FA+年月日+4位流水 |
+
+### 21.4 常见错误
+
+| 错误码 | 说明 |
+|--------|------|
+| FAILED_TO_ACQUIRE_LOCK | 3秒内未获取Redis锁 |
+| 序列号溢出 | 达到digit位数上限(如9999) |
+
+---
+
+## 22. 库区库位管理体系
+
+### 22.1 层级关系
+
+```
+Warehouse → Zone(库区) → Location(库位)
+                     ├── WorkArea(工作区)
+                     ├── LocationClassify(库位分类)
+                     └── LocationLoad(库位承载)
+```
+
+### 22.2 库位类型(12种)
+
+| 类型 | 用途 |
+|------|------|
+| PICKING_LOCATION | 拣货位 |
+| GOOD_LOCATION | 良品存库位 |
+| REJECT_LOCATION | 残品存库位 |
+| PUT_TEMPORARY | 上架暂存 |
+| CROSS_TEMPORARY | 越库暂存 |
+| SORTING_LOCATION | 发货分拣位 |
+| NEW_RETAIL | 新零售拣货位 |
+| PACKING_TABLE | 打包台 |
+
+### 22.3 库位推荐算法
+
+**空库位查询条件**：
+- 温层匹配(tempId)
+- 无库存(wsi.id is null)
+- 重量/体积承载满足
+- 按pickingSequence升序
+
+**效期优先(FEFO)**：
+- 按过期日期升序推荐
+- 或按生产日期(根据allocateBatchPriority配置)
+
+---
+
+## 23. AGV任务管理体系
+
+### 23.1 任务状态流转
+
+```
+NEW → SUCCESS → ERROR → ALLOCATED → PICK_UP_COMPLETE → ARRIVED_TRANSFER_POSITION → FINISH
+新建    已下发    下发失败   已分配       取货完成         已到中转位               完成
+                                    │
+                                    +→ CANCEL / GENERATE_ERROR
+```
+
+### 23.2 任务创建责任链
+
+```
+PlacementAdviceService.doAgvCarryTaskCreate()
+    ├── Processor10: 越库任务(beCross=true)
+    └── Processor20: 上架任务(beCross=false)
+            ├── handle10: 人工上架暂存区
+            ├── handle20: 退货收货
+            ├── handle40: 越库计算
+            └── handle50: 异常(GENERATE_ERROR)
+```
+
+### 23.3 Wes系统Feign
+
+| 接口 | 用途 |
+|------|------|
+| createAgvTask() | 创建搬运任务 |
+| listTask() | 查询任务 |
+| handleTask() | 处理任务(状态变更) |
+| markPointOccupy() | 标记点位占用 |
+
+---
+
+## 24. 数据量级
 
 | 服务 | Controller | ServiceImpl | Entity | Feign | MQ | Job | Enum |
 |------|-----------|-------------|--------|-------|-----|-----|------|

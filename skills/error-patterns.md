@@ -218,7 +218,34 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 新零售温层校验绕过 | NEW_RETAIL类型独立产线 | 检查 `LocationTypeEnum.NEW_RETAIL` 判断逻辑 |
 | 温层删除失败 | 库区/商品已引用 | 检查 `WarmLayerServiceImpl.deleteWarmLayerById()` 引用校验 |
 
-### 6.16 WMS 错误码速查
+### 6.16 编码规则问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| FAILED_TO_ACQUIRE_LOCK | 3秒内未获取Redis锁 | 检查 `CodeServiceImpl` 锁参数(50s超时) |
+| 编码返回null | BasicDataClient Feign调用失败 | 检查basicdata服务状态和网络 |
+| 序列号溢出 | 达到digit位数上限 | 增大digit参数(如4→5位) |
+| 编码规则缺失 | getCode()未找到对应prefix | 检查 `SerialNumberType` 枚举定义 |
+
+### 6.17 库区库位问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 库位推荐为空 | 空库位查询条件过于严格 | 检查 `LocationMapper.xml` getEmptyLoc SQL |
+| 库位类型错误 | locationType字段与业务不匹配 | 检查 `LocationTypeEnums` 枚举值 |
+| 库位承载不足 | 重量/体积超限 | 检查 `LocationLoad` 的weight/volume字段 |
+| 库位挂载失败 | 库位已与其他商品绑定 | 检查 `LocationLoad` 的 isStandardStorehouse 限制 |
+
+### 6.18 AGV任务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| AGV任务创建失败 | 未维护上架推荐区域配置 | 检查 `PlacementAdviceServiceImpl` handle50() |
+| AGV任务下发失败 | Wes系统接口调用失败 | 检查 `WesBizcoreClient.createAgvTask()` Feign日志 |
+| AGV任务无法取消 | 状态不可取消 | 检查 `AgvStatusEnum.getCancelStatus()` |
+| AGV库位冲突 | 目标库位被预占 | 检查 `AbstractAgvGetTargetLocHandler.locationAgvTaskFilter()` |
+
+### 6.19 WMS 错误码速查
 
 | 错误码范围 | 所属模块 | 定位文件 |
 |-----------|---------|---------|
