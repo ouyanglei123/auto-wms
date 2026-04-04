@@ -34,7 +34,7 @@ Bash("ls ~/.claude/agents/*.md 2>/dev/null | wc -l")
   -> >= 5 -> PASS
   -> < 5 -> WARN: "Agent 文件不完整，建议重新 auto install"
 
-Bash("ls ~/.claude/commands/auto/*.md 2>/dev/null | wc -l")
+Bash("ls ~/.claude/commands/wms/*.md 2>/dev/null | wc -l")
   -> >= 5 -> PASS
   -> < 5 -> WARN: "Command 文件不完整，建议重新 auto install"
 

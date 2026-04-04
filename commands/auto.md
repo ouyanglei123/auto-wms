@@ -86,7 +86,7 @@ Glob("CLAUDE.md") → Read（如存在）
 ### 1.2 能力清单收集（并行 Glob + Grep 提取 frontmatter，禁止 Read 完整文件）
 
 ```
-Glob("$HOME/.claude/commands/auto/*.md")
+Glob("$HOME/.claude/commands/wms/*.md")
 Glob("$HOME/.claude/agents/*.md")
 Glob("$HOME/.claude/plugins/**/*.md")
 
