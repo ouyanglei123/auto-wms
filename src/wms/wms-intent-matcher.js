@@ -8,7 +8,28 @@
  * - 输出结构化的代码定位
  */
 
-import { logger } from '../logger.js';
+/**
+ * 置信度阈值配置
+ */
+const CONFIDENCE_THRESHOLD = 60;
+
+/**
+ * 同义词词典（扩展关键词匹配能力）
+ */
+const SYNONYMS = {
+  '出库订单': ['出库单', '出库', 'SO', 'sales_order'],
+  '入库订单': ['入库单', '入库', 'PO', 'purchase_order'],
+  '波次': ['建波', '创建波次', 'wave'],
+  '分配': ['库位分配', '分配库位', 'allocation'],
+  '拣货': ['挑拣', 'pick'],
+  '收货': ['接收', 'receive'],
+  '上架': ['上架', 'putaway', '放置'],
+  '质检': ['质量检查', '检查', 'quality'],
+  '移位': ['移动', '转移', 'move'],
+  '盘点': ['盘点', 'count', '盘点'],
+  '冻结': ['锁定', 'block', 'freeze'],
+  '库存': ['stock', 'inventory', '仓储']
+};
 
 /**
  * 服务关键词配置（从 commands/wms/wms.md 提取）
@@ -124,8 +145,10 @@ const SERVICE_KEYWORDS = {
  * WMS Intent Matcher Class
  */
 export class WmsIntentMatcher {
-  constructor() {
+  constructor(options = {}) {
     this.serviceKeywords = SERVICE_KEYWORDS;
+    this.confidenceThreshold = options.confidenceThreshold ?? CONFIDENCE_THRESHOLD;
+    this.fuzzyMatchThreshold = options.fuzzyMatchThreshold ?? 0.8;
   }
 
   /**
@@ -135,29 +158,41 @@ export class WmsIntentMatcher {
    */
   analyze(userIntent) {
     if (!userIntent || typeof userIntent !== 'string') {
-      return { isWmsRelated: false };
+      return { isWmsRelated: false, confidence: 0 };
     }
 
     const lowerIntent = userIntent.toLowerCase();
     const tokens = this._tokenize(lowerIntent);
 
-    // 1. 服务级别匹配
-    const serviceMatches = this._matchServiceKeywords(tokens);
+    // 0. 同义词扩展
+    const expandedTokens = this._expandSynonyms(tokens);
+
+    // 1. 服务级别匹配（精确 + 模糊）
+    const serviceMatches = this._matchServiceKeywords(expandedTokens);
     if (serviceMatches.length === 0) {
-      return { isWmsRelated: false };
+      return { isWmsRelated: false, confidence: 0 };
     }
 
     // 2. 选择最佳服务
     const best = serviceMatches[0];
 
     // 3. 业务域匹配
-    const domainMatch = this._matchBusinessDomain(tokens, best.service);
+    const domainMatch = this._matchBusinessDomain(expandedTokens, best.service);
 
     // 4. 提取代码定位
     const codeLocations = this._extractCodeLocations(best.service, domainMatch.domain);
 
     // 5. 计算置信度
     const confidence = this._computeConfidence(best, domainMatch);
+
+    // 6. 置信度阈值过滤
+    if (confidence < this.confidenceThreshold) {
+      return {
+        isWmsRelated: false,
+        confidence,
+        reason: `置信度 ${confidence}% < 阈值 ${this.confidenceThreshold}%`
+      };
+    }
 
     return {
       isWmsRelated: true,
@@ -170,6 +205,26 @@ export class WmsIntentMatcher {
   }
 
   /**
+   * 同义词扩展
+   * @param {string[]} tokens - 分词结果
+   * @returns {string[]} 扩展后的分词
+   */
+  _expandSynonyms(tokens) {
+    const expanded = new Set(tokens);
+
+    for (const token of tokens) {
+      for (const [base, synonyms] of Object.entries(SYNONYMS)) {
+        if (synonyms.includes(token) || token.includes(base)) {
+          synonyms.forEach(s => expanded.add(s));
+          expanded.add(base);
+        }
+      }
+    }
+
+    return Array.from(expanded);
+  }
+
+  /**
    * 分词处理
    */
   _tokenize(text) {
@@ -177,26 +232,90 @@ export class WmsIntentMatcher {
   }
 
   /**
-   * 服务级别关键词匹配
+   * 服务级别关键词匹配（精确 + 模糊）
    */
   _matchServiceKeywords(tokens) {
     const matches = [];
 
     for (const [service, config] of Object.entries(this.serviceKeywords)) {
-      const matched = config.keywords.filter(kw =>
-        tokens.some(t => t.includes(kw) || kw.includes(t))
-      );
+      const matched = [];
+      const fuzzyMatched = [];
 
-      if (matched.length > 0) {
+      for (const kw of config.keywords) {
+        // 精确匹配
+        if (tokens.some(t => t.includes(kw) || kw.includes(t))) {
+          matched.push(kw);
+        } else {
+          // 模糊匹配
+          const fuzzy = tokens.find(t => this._fuzzyMatch(t, kw) >= this.fuzzyMatchThreshold);
+          if (fuzzy) {
+            fuzzyMatched.push({ keyword: kw, matched: fuzzy, score: this._fuzzyMatch(fuzzy, kw) });
+          }
+        }
+      }
+
+      if (matched.length > 0 || fuzzyMatched.length > 0) {
         matches.push({
           service,
           matchedKeywords: matched,
-          score: matched.length * 10 + config.priority
+          fuzzyKeywords: fuzzyMatched.map(f => f.keyword),
+          score: matched.length * 10 + config.priority + fuzzyMatched.length * 5
         });
       }
     }
 
     return matches.sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * 模糊匹配（编辑距离算法）
+   * @param {string} s1 - 字符串1
+   * @param {string} s2 - 字符串2
+   * @returns {number} 相似度分数 0-1
+   */
+  _fuzzyMatch(s1, s2) {
+    if (!s1 || !s2) return 0;
+    if (s1 === s2) return 1;
+
+    const len1 = s1.length;
+    const len2 = s2.length;
+    const maxLen = Math.max(len1, len2);
+
+    if (maxLen === 0) return 1;
+
+    // 早期退出：长度差异太大
+    if (Math.abs(len1 - len2) > maxLen * 0.3) return 0;
+
+    // 包含关系
+    if (s1.includes(s2) || s2.includes(s1)) {
+      return 0.8 + (Math.min(len1, len2) / maxLen) * 0.2;
+    }
+
+    // 编辑距离
+    const distance = this._levenshteinDistance(s1, s2);
+    return 1 - (distance / maxLen);
+  }
+
+  /**
+   * Levenshtein 编辑距离
+   */
+  _levenshteinDistance(s1, s2) {
+    const dp = Array(s1.length + 1).fill(null).map(() => Array(s2.length + 1).fill(0));
+
+    for (let i = 0; i <= s1.length; i++) dp[i][0] = i;
+    for (let j = 0; j <= s2.length; j++) dp[0][j] = j;
+
+    for (let i = 1; i <= s1.length; i++) {
+      for (let j = 1; j <= s2.length; j++) {
+        if (s1[i - 1] === s2[j - 1]) {
+          dp[i][j] = dp[i - 1][j - 1];
+        } else {
+          dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+        }
+      }
+    }
+
+    return dp[s1.length][s2.length];
   }
 
   /**
@@ -209,7 +328,7 @@ export class WmsIntentMatcher {
     let bestDomain = '通用';
     let bestMatched = [];
 
-    for (const [domainName, domainConfig] of Object.entries(domains)) {
+    for (const [domainName] of Object.entries(domains)) {
       const domainTokens = domainName.split(/[\s,，。.、；;]+/);
       const matched = domainTokens.filter(dt =>
         tokens.some(t => t.includes(dt) || dt.includes(t))
