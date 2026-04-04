@@ -304,6 +304,56 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 死锁(用户被锁定) | 拣货任务卡住，用户无法操作 | `TaskLockUserCleanJob` 会自动清理25分钟前的占用 |
 | 库存数据不一致 | 多个Job同时操作同一库存 | 检查 `w_stored_item` 锁是否正确获取 |
 
+### 6.24 盘点业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 盘点库位锁获取失败 | 静盘库位已被其他操作占用 | 检查 `CountLocationLockServiceImpl` + `w_count_location_lock` 表 |
+| 盘点录入被阻塞 | Redis分布式锁900s未释放 | 检查 `CountAddRedisLockHandler1` 锁逻辑 |
+| 盘点库存与实际不符 | 盘点期间有出入库操作 | 检查 `CountFinishRpcStorageHandler5` 库存处理 |
+| 盘点冻结未回滚 | 取消盘点时status未恢复AVAILABLE | 检查 `CountCancelRpc` 库存处理 |
+| 责任链断链 | Handler返回false导致后续不执行 | 检查 `AbstractCountCreateHandler.doCreateCount()` 断链位置 |
+| 盘点数量不匹配 | 盘点数量 vs 系统库存 diffQty ≠ 0 | 检查 `CountMasterServiceImpl.countFinishByItem()` |
+| 复盘未触发 | isReplay不满足条件 | 检查 `CountFinishReplayVerityHandler3` 校验逻辑 |
+| 盘点回传GAIA失败 | 网络或接口问题 | 检查 `rfCountService.countFinishToGaia()` 日志 |
+
+### 6.25 补货业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 补货数量计算错误 | 空库位算成非空或反之 | 检查 `ReplenishServiceImpl.checkStoregBatch()` 条件判断 |
+| 多批次不补货 | 批次一致性校验失败 | 检查生产日期+保质期+过期日期是否一致 |
+| 补货完成波次未触发 | `afterReplenishmentAutoAllocation()` 调用失败 | 检查 Feign 调用日志 |
+| 紧急补货取消失败 | 回调 outbound 失败 | 检查 `cancelEmergencyReplenish()` 异常处理 |
+| 补货优先级排序错误 | 优先级计算逻辑问题 | 检查 `ReplenishPrioritySortServiceImpl` |
+| 跨区补货失败 | whetherCrossZone配置限制 | 检查仓库配置 + `urgentCreateReplenish()` |
+| 补货锁定库存未释放 | 补货取消时未解锁 | 检查 `doCancelReplenish()` 回滚逻辑 |
+
+### 6.26 库存管理问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 库存扣减失败 | 库存不足或已被其他操作占用 | 检查 `outSaveStoredItem()` 库存校验 |
+| 库存冻结失败 | 已冻结的库存再次冻结 | 检查 `doStorageFreeze()` 重复校验 |
+| 封存商品无法解冻 | freezeReason含"封存"字样 | 检查 `StoredItemServiceImpl.doStorageFreeze()` |
+| 冻结库存被分配 | freezeSign检查未生效 | 检查 `WaveAllocationServiceImpl` 的冻结过滤 |
+| 批次属性变更失败 | 变更数量超过库存数量 | 检查 `changeBatchAttributes()` 数量校验 |
+| 库存数据不一致 | 分布式事务部分回滚 | 检查 undo_log 表 + Seata TC 日志 |
+| 库存索引冲突 | indexKey(MD5)重复 | 检查 `StoredItem.indexKey` 生成逻辑 |
+
+### 6.27 分布式事务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 全局锁超时 | 业务执行超timeoutMills | 检查 `undo_log` 表 log_status=1 的记录 |
+| 分支事务部分回滚 | Seata Server不可用 | 检查 TC 服务状态和日志 |
+| undo_log堆积 | 回滚日志未清理 | `DELETE FROM undo_log WHERE log_status=0 AND log_created < DATE_SUB(NOW(), INTERVAL 7 DAY)` |
+| AT模式不支持的操作 | 执行了无主键DELETE/跨库JOIN | 检查 `CustomRMHandler` 自定义处理 |
+| 嵌套事务不生效 | 传播行为配置错误 | 检查 Spring `@Transactional(propagation=)` 配置 |
+| XID未传递 | Feign调用时XID丢失 | 检查 `RootContext.bind(xid)` 是否在入口调用 |
+| @GlobalTransactional未生效 | 注解被注释或未代理 | 检查方法是否有 `@GlobalTransactional` 注解 |
+
+
 
 ## 修复策略模板
 

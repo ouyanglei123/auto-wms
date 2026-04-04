@@ -1608,3 +1608,276 @@ UNPLAN_TASK_LOCK_     // 无计划锁前缀
 7. RF分拣任务占用人重置
 
 **配置时间**: 默认25分钟前的占用信息会被清理
+
+---
+
+## 29. 盘点业务深度 - DDD责任链模式
+
+### 29.1 盘点DDD责任链 (19个Handler)
+
+**基类**: `AbstractCountCreateHandler` - 模板方法模式
+
+**创建盘点单Handler链** (`CreateCountChainService`):
+
+| Order | Handler类 | 功能 |
+|-------|-----------|------|
+| 1 | `CountMqParamHandler1` | 获取MQ参数，解析维度(商品/库位盘) |
+| 2 | `CountMasterStorageHandler2` | 调用库存服务获取实际盘点库存 |
+| 3 | `CountStoreItemListChainService3` | 再次查询商品库存构建storageMap |
+| 4 | `CountIsDarkOrLightHandler4` | 判断静盘/盲盘/明盘 |
+| 5 | `CountStoreIsChangeVerifyHandler5` | 静盘时验证库存是否变化 |
+| 6 | `CountStoreEmptyCountVerifyHandler6` | 空盘点单校验 |
+| 7 | `CountBuildCountMasterOneHandler7` | 第一次构造盘点单(设置单号/来源/类型/状态TEMP) |
+| 8 | `CountEmptyLocHandler8` | 插入空库位明细 |
+| 9 | `CountFillPropertyHandler9` | 填充业务属性(Map/Set) |
+| 10 | `CountLocationLockHandler10` | 批量增加盘点库位锁(静盘加锁，动盘不加) |
+| 11 | `CountBuildCountMasterTwoHandler11` | 第二次构造盘点单(填充ZoneId/WorkAreaId等) |
+| 12 | `CountVacancyItemHandler12` | 构建报缺数据(isVacancy=true) |
+| 13 | `CountDetailSaveDBHandler13` | 盘点明细批量入库 |
+| 14 | `CountBuildStoredItemReqHandler14` | 构建更新库存数据StoredItemReq列表 |
+| 15 | `CountStorageRelationDBHandler15` | 增加明细与库存关系入库(静盘) |
+| 16 | `CountMasterSaveDBHandler16` | 盘点主任务入库 |
+| 17 | `CountRpcHandler17` | RPC调用(库存标记INVENTORY_LOCK+关闭报缺单) |
+| 18 | `CountNoStoredItemCheckHandler18` | 库存被抢处理，删除无库存明细 |
+| 19 | `CountExcelErrorHandler19` | 异常数据Excel化+WebSocket通知 |
+
+**RF盘点完成Handler链** (`RfCountFinishHandlerChain`):
+
+| Order | Handler类 | 功能 |
+|-------|-----------|------|
+| 1 | `RfCountFinishEmptyLocHandler1` | 空库位标记完成 |
+| 2 | `RfCountFinishCheckParamHandler2` | 参数校验(商品勾选/数量录入) |
+| 3 | `RfCountFinishCheckLotHandler3` | 混批校验 |
+| 4 | `RfCountFinishCommitHandler4` | 提交盘点 |
+
+**盘点完成Handler链** (`FinishCountChainService`):
+
+| Order | Handler类 | 功能 |
+|-------|-----------|------|
+| 1 | `CountFinishRepeatDataCleanHandler1` | 删除重复数据 |
+| 2 | `CountFinishCountStatusVerifyHandler2` | 状态校验(必须为COUNTING) |
+| 3 | `CountFinishCheckLotHandler10` | 判断混批 |
+| 4 | `CountFinishReplayVerityHandler3` | 是否需要复盘 |
+| 5 | `CountFinishDataProcessHandler4` | 复盘数据准备 |
+| 6 | `CountFinishRpcStorageHandler5` | RPC库存处理 |
+| 7 | `CountFinishCountLocationLockHandler6` | 释放库位锁 |
+| 8 | `CountFinishCreateReplayCountHandler7` | 复盘核心处理 |
+| 9 | `CountFinishDelCountHandler8` | 清理锁/主单/关系表 |
+| 10 | `CountFinishRpcHandler9` | 回传Gaia |
+
+### 29.2 盘点类型 (CountTypeEnum)
+
+| 类型 | Code | 说明 |
+|------|------|------|
+| 报缺差异盘 | `VACANCY_DIFF` | 报缺生成的差异盘点 |
+| 动盘(明盘) | `DYNAMIC_LIGHT` | 看得到系统库存 |
+| 动盘(盲盘) | `DYNAMIC_DARK` | 看不到系统库存 |
+| 静盘(明盘) | `STATIONARY_LIGHT` | 看得到系统库存 |
+| 静盘(盲盘) | `STATIONARY_DARK` | 看不到系统库存 |
+
+**静盘 vs 动盘区别**:
+- 静盘: 加库位锁、创建库存关系、调用RPC锁定库存
+- 动盘: 不加锁、不创建关系、不RPC
+
+### 29.3 盘点状态机
+
+```
+TEMP(新建) → NEW(待领取) → COUNTING(盘点中) → COUNT_FINISH(完成)
+                                    ↓
+                               CANCELED(取消)
+```
+
+### 29.4 盘点盈亏
+
+**盘盈原因** (CountProfitEnum):
+- 801001: 门店订单漏发货
+- 801002: 多收货未入库清点差异
+- 801003: 门店退货未入库
+- 801004: 同品类物料发串货
+
+**盘亏原因** (CountLossEnum):
+- 801005: 门店订单多发货
+- 801006: 收货入库实物未清点差异
+- 801007: 门店退货已入账实物未退仓
+- 801008: 仓库操作破损/货损/污染
+- 801009: 同品类物料发串货
+
+---
+
+## 30. 补货业务深度
+
+### 30.1 补货状态机
+
+```
+NEW(待领取) → REPLENISHMENT(补货中) → REPLENISH_FINISH(完成)
+   │                │
+   │                │
+   v                v
+REPLENISH_CANCEL(取消)
+```
+
+### 30.2 补货类型
+
+| 类型 | 代码 | 说明 |
+|------|------|------|
+| 例常补货 | `ROUTINE_REPLENISH` | 日常补货，定时任务触发 |
+| 紧急补货 | `EMERGENCY_REPLENISH` | 波次分配时库存不足触发 |
+
+**创建触发条件** (ReplenishCreateTypeEnum):
+| 类型 | 说明 |
+|------|------|
+| `LESS` | 拣货位库存 < 安全库存 |
+| `ZERO` | 拣货位完全空 |
+| `LESS_EQUAL` | <安全库存且批次一致 |
+
+### 30.3 例常补货流程
+
+```
+建议补货 → 确认补货 → 执行补货 → 完成
+```
+
+1. 建议补货: 按温层/库区获取需补货物料，按拣次倒序
+2. 补货校验: 过滤新零售拣货位，多拣货位绑定时只有空拣货位生成任务
+3. 创建任务: 锁定存货位库存(UNAVAILABLE)，创建ReplenishDetail
+4. RF执行: 领取→库位校验→上架确认→释放预锁
+
+### 30.4 紧急补货(波次联动)
+
+**触发**: 波次分配时拣货位库存不足
+
+**流程**:
+1. 判断是否存在未完成例常补货单
+2. 存在则追加，不存在则新建紧急补货单
+3. 计算各拣货位需求(空拣货位优先)
+4. 补货完成调用 `afterReplenishmentAutoAllocation()`
+
+### 30.5 补货核心Service
+
+| 方法 | 类 | 说明 |
+|------|-----|------|
+| `doCreateReplenish()` | ReplenishServiceImpl | 执行日常补货创建 |
+| `checkStoregBatch()` | ReplenishServiceImpl | 补货校验与过滤 |
+| `urgentCreateReplenish()` | ReplenishMasterServiceImpl | 紧急补货创建(跨区) |
+| `afterReplenishmentAutoAllocation()` | ReplenishMasterServiceImpl | 补货完成触发出库分配 |
+
+---
+
+## 31. 库存管理深度
+
+### 31.1 库存核心操作API
+
+**StoredItemServiceImpl**:
+
+| 方法 | 功能 |
+|------|------|
+| `inSaveStoredItem()` | 入库-库存保存 |
+| `outSaveStoredItem()` | 出库-库存扣减 |
+| `doStorageFreeze()` | 库存冻结 |
+| `dealStorageUnfreeze()` | 库存解冻 |
+| `changeBatchAttributes()` | 批次属性变更 |
+
+### 31.2 冻结/解冻机制
+
+**冻结流程** (`doStorageFreeze`):
+1. 校验库存是否存在
+2. 校验当前冻结状态(已冻结不能再冻)
+3. isAllChange=true时冻结全部数量
+4. 出库原库存 + 入库新库存(freezeSign=true)
+
+**解冻流程**:
+- 调用 `doStorageFreeze(sign=false)` 实现
+- 解冻时清除freezeReason
+
+### 31.3 批次属性核心字段
+
+| 字段 | 说明 |
+|------|------|
+| `shelfLifeDays` | 保质期天数 |
+| `produceDate` | 生产日期 |
+| `expiryDate` | 过期日期 |
+| `isAdvent/isDiscontinued/isExpired` | 临期/停售/过期标志 |
+| `traceCode` | 溯源批次码 |
+| `freezeNumber` | 冻结任务号 |
+
+### 31.4 库存与其他业务交互
+
+| 业务 | Feign调用 | 用途 |
+|------|----------|------|
+| 入库 | `inSaveStoredItem()` | 增加库存 |
+| 出库 | `outSaveStoredItem()` | 扣减库存 |
+| 移位 | `getMoveLocStorage()` | 移位锁定查询 |
+| 盘点 | `getCountUnavailableStorage()` | 盘点获取不可用库存 |
+| 损耗 | `queryStorageByBatchIds()` | 不合格品关联查询 |
+
+---
+
+## 32. Seata分布式事务深度
+
+### 32.1 @GlobalTransactional 使用场景
+
+**outbound (120+处)**:
+| 场景 | 方法 |
+|------|------|
+| 越库确认 | `CrossDetailServiceImpl.crossConfirm()` |
+| 牛肉拣货 | `PickTaskBeefSoringServiceImpl.processOneWeighRecord()` |
+| 拣货提交 | `SortingWhilePickingServiceImpl.doPickTaskFruit()` |
+| 取消分配 | `CancelAllocationByWaveServiceImpl.invokeTaskAndInventory()` |
+
+**inside (80+处)**:
+| 场景 | 方法 |
+|------|------|
+| 盘点创建 | `CountMasterServiceImpl.countCreate()` |
+| 盘点启动 | `CountMasterServiceImpl.countStart()` (30分钟超时) |
+| 移位确认 | `MoveDetailServiceImpl.moveConfirm()` |
+| 库位移位 | `MoveBdServiceImpl.moveBdLocForthConfirm()` |
+
+**inbound (50+处)**:
+| 场景 | 方法 |
+|------|------|
+| 收货确认 | `InboundReceiveServiceImpl.confirmReceived()` |
+| 质检确认 | `QualityInspectionRcptConfirmServiceImpl.confirmQualityInspection()` |
+
+### 32.2 超时时间配置
+
+| 业务场景 | timeoutMills | 说明 |
+|---------|-------------|------|
+| 快速确认操作 | 60s | 简单状态更新 |
+| 标准业务操作 | 3-5min | 常规业务 |
+| 复杂批处理 | 10-30min | 盘点、批量移位 |
+| 导入导出 | 30min+ | 大数据量 |
+
+### 32.3 AT模式限制
+
+| 限制类型 | 说明 | 处理方案 |
+|---------|------|---------|
+| 无主键DELETE | 无法定位待删除记录 | 使用CustomRMHandler |
+| 跨库JOIN | 无法识别跨分片关联 | 改为单分片或广播表 |
+
+### 32.4 undo_log表
+
+```sql
+-- 关键字段
+xid           -- 全局事务ID
+branch_id     -- 分支事务ID
+rollback_info -- 序列化后的undo log(前镜像/后镜像)
+log_status    -- 0:正常, 1:防御状态(回滚中)
+```
+
+**清理SQL**:
+```sql
+DELETE FROM undo_log
+WHERE log_status = 0
+  AND log_created < DATE_SUB(NOW(), INTERVAL 7 DAY);
+```
+
+### 32.5 GlobalLockHelper 与 @GlobalTransactional 配合
+
+```java
+// Redisson多锁 + Seata事务配合
+List<RLock> rLocks = ...;
+redissonMultiLock = redissonClient.getMultiLock(rLocks.toArray());
+isLockSuccessful = redissonMultiLock.tryLock(-1, outTime, TimeUnit.SECONDS);
+
+// 锁内执行带@GlobalTransactional的操作
+((Service) AopContext.currentProxy()).methodWithGlobalTx();
+```
