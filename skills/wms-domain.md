@@ -1881,3 +1881,258 @@ isLockSuccessful = redissonMultiLock.tryLock(-1, outTime, TimeUnit.SECONDS);
 // 锁内执行带@GlobalTransactional的操作
 ((Service) AopContext.currentProxy()).methodWithGlobalTx();
 ```
+
+---
+
+## 33. 越库与分拣业务
+
+### 33.1 越库业务 (CrossDock)
+
+**核心实体**: `CrossDetail` (w_cross_detail)
+
+**越库类型**:
+| 类型 | 说明 |
+|------|------|
+| SB | 收货越库 |
+| SC | 上架越库 |
+
+**越库状态机**:
+```
+NEW(未完成) → FINISHED(完成)
+```
+
+**RF越库6步流程**:
+```
+第一屏: 选择客户交货日期
+    ↓
+第二屏: 选择越库任务(商品+波次)
+    ↓
+第三屏: 扫描托盘确认
+    ↓
+第四屏: 核对信息页(拣货数量核对)
+    ↓
+第五屏: 修改数量(报缺处理)
+    ↓
+第六屏: 选择目标托盘完成越库
+```
+
+**核心Service**: `CrossDetailServiceImpl.crossConfirm()` - 带@GlobalTransactional
+
+### 33.2 分拣业务 (Sorting)
+
+**核心实体**:
+| Entity | 说明 |
+|--------|------|
+| `SortTask` | 分拣任务表 |
+| `SortTaskDetail` | 分拣任务明细 |
+
+**分拣状态机**:
+```
+NEW → ABNORMAL
+  │       ↓
+  ├──▶ CLAIMED → SORTING → FINISH
+  │
+  └──▶ CANCELED
+```
+
+**分拣方式**:
+| 方式 | 说明 |
+|------|------|
+| RF | RF手持终端 |
+| 纸单 | 纸单 |
+| 语音 | 语音播报 |
+| DAS | 电子标签 |
+
+**分拣下发流程**:
+```
+SortTaskService.sortTaskDistribution()
+    ↓
+DpsAndVoicePushService.sortTaskPush()
+    ↓
+EdiService.pushDataToMultimedia() → DPS/语音系统
+    ↓
+SortTaskService.updateSortTaskSendStatus()
+```
+
+**核心Service**: `SortTaskServiceImpl`, `RfPdaSortingServiceImpl`
+
+---
+
+## 34. 复核与发运业务
+
+### 34.1 复核业务 (Review)
+
+**核心实体**: `ReviewRecord` (w_review_record)
+
+**复核状态机** (ReviewStatusEnum):
+| 枚举值 | 含义 |
+|--------|------|
+| NEW | 未复核 |
+| PARTIAL_REVIEW | 部分复核 |
+| REVIEWED | 已复核 |
+| NO_REVIEW_REQUIRED | 无需复核 |
+
+**RF复核5步流程**:
+```
+Screen1: 客户集合列表
+    ↓
+Screen2: 交货日期列表
+    ↓
+Screen3: 门店列表
+    ↓
+Screen4: 商品列表 + 确认无误
+    ↓
+Screen5: 修改复核数量 + 录入箱数
+```
+
+**复核与装箱关联**:
+- 满箱: `boxState=true` → 标记满箱
+- 不满箱: 继续复核流程
+
+### 34.2 发运/装车业务 (Delivery & Loading)
+
+**出库状态机** (OutboundStatusEnum):
+```
+NEW → WAVED → ALLOCATED → PICKING → TO_SORTING → SORTING → TO_SHIPPING → SHIPPING
+```
+
+**装车单状态** (AllocationLoading):
+```
+NEW → LOADING → HAS_LOADING → SHIPPED
+                    ↓
+                 CANCEL
+```
+
+**TMS调度对接**:
+1. TMS推送调度单 → WMS创建AllocationLoading
+2. WMS装车完成 → 回传TMS
+3. TMS取消 → TmsCancelDisPatchOrderNumberReq
+
+**发运确认流程**:
+```
+DeliveryServiceImpl.deliveryShip()
+    ↓
+校验订单状态(TO_SHIPPING/DIFCANCELED/CANCELED)
+    ↓
+planOutboundDelivery() / noPlanOutboundDelivery()
+    ↓
+库存扣减 + 状态变更 + 回传上游
+```
+
+**核心Service**: `DeliveryCommitServiceImpl` - 发运确认核心
+
+---
+
+## 35. Apollo配置与ShardingSphere分片
+
+### 35.1 Apollo配置中心
+
+**Namespace配置**:
+```properties
+apollo.bootstrap.namespaces=application,shsc-wms-sharding-jdbc,shsc-wms-common
+```
+
+**三个核心Namespace**:
+| Namespace | 用途 |
+|-----------|------|
+| application | 应用级配置 |
+| shsc-wms-sharding-jdbc | ShardingSphere分片配置 |
+| shsc-wms-common | 公共配置 |
+
+**配置注入方式**:
+```java
+// 方式1: @ApolloConfig注解
+@ApolloConfig
+private Config config;
+
+// 方式2: @Value注入
+@Value("${wms.outbound.template:false}")
+private boolean template;
+
+// 方式3: ApolloConfigEnum统一管理
+ApolloConfigEnum.BILL_TYPE.getCode()
+```
+
+### 35.2 ShardingSphere分库分表
+
+**核心分片键**: `tenantCode` (租户编码)
+
+**自动填充**: `MyMetaObjectHandler.insertFill()`
+
+**跨分片限制**:
+| 问题 | 原因 | 解决方案 |
+|------|------|---------|
+| ShardingException | 分片键缺失 | SQL必须包含tenantCode |
+| 跨库查询失败 | 不支持跨分片JOIN | 使用广播表或应用层二次查询 |
+| 分页查询慢 | 深度分页跨分片合并 | 限制分页深度或游标分页 |
+
+---
+
+## 36. RocketMQ消息队列
+
+### 36.1 Topic清单
+
+| Topic | 用途 |
+|-------|------|
+| WMS_INOUT_TOPIC | 出库核心(拣货/发运/重定位) |
+| WMS_OUTBOUND_GENERAL | 出库通用(均分/越库/差异) |
+| WMS_SORT_RECORD_TOPIC | 分拣记录生成 |
+| WMS_TRACEABILITY_ITEM_FROM_WMS_TOPIC | 溯源消息 |
+| WMS_EDI_OUTBOUND_TOPIC | EDI下推出库单 |
+| WMS_FRUIT_PACK_TOPIC | 摘果绑箱 |
+
+### 36.2 Tag清单
+
+| Tag | 用途 |
+|-----|------|
+| WMS_PICK_TAG | 拣货 |
+| WMS_SHIP_TAG | 发运 |
+| WMS_ALLOCATION_TAG | 自动分配/重定位 |
+| AVG_CROSS_DIFF_TAG | 均分-越库-差异 |
+| WMS_SORT_RECORD_TAG | 分拣记录 |
+| WMS_TRACE_SOURCE_TAG | 溯源 |
+
+### 36.3 事务消息机制
+
+**事务监听器基类**: `AbstractRocketMQLocalTransactionListener`
+
+**核心事务Producer**:
+| Producer Group | 用途 |
+|---------------|------|
+| WMS_SHIP_TRANSACTION_GROUP | 异步发运 |
+| WMS_PICK_RECORD_TRANSACTION_GROUP | 异步拣货记录 |
+| WMS_SHIP_POST_TRANSACTION_GROUP | 异步出库回传 |
+| WMS_AGAIN_ALLOCATION_TRANSACTION_GROUP | 异步重定位 |
+| WMS_OUTBOUND_GENERAL_PRO_GROUP | 出库通用事务 |
+
+**事务消息流程**:
+1. 发送半消息(Half Message)
+2. 执行本地事务
+3. 本地事务成功 → 提交消息
+4. 本地事务失败 → 回查或回滚
+
+### 36.4 消费模式
+
+```java
+// 方式1: 继承WmsAbstractConsumer (推荐)
+@RocketMQMessageListener(topic = "...", consumerGroup = "...")
+public class RocketShipConsumer extends WmsAbstractConsumer<InOutMessage>
+
+// 方式2: 实现RocketMQListener
+@Service
+@RocketMQMessageListener(topic = "...", consumerGroup = "...", consumeThreadMax = 16)
+public class FruitPackConsumer implements RocketMQListener<T>
+```
+
+### 36.5 消费幂等性
+
+```java
+// 通过GlobalLockHelper加锁保证幂等
+Boolean execSuccess = GlobalLockHelper.lock(
+    () -> this.execPackRecord(message),
+    GlobalLockHelper.getLockKey("WMS_FRUIT_PACK_TOPIC:" + traceId),
+    () -> { },
+    MessageI18n.getMessage(OutboundErrorCode.OPERATION_LOCK.getCode()),
+    -1L);
+```
+

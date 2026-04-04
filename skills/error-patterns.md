@@ -353,6 +353,52 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | XID未传递 | Feign调用时XID丢失 | 检查 `RootContext.bind(xid)` 是否在入口调用 |
 | @GlobalTransactional未生效 | 注解被注释或未代理 | 检查方法是否有 `@GlobalTransactional` 注解 |
 
+### 6.28 越库与分拣业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 越库确认失败 | crossStatus状态不对 | 检查 `CrossDetailServiceImpl.crossConfirm()` 状态校验 |
+| 越库数量不匹配 | basePlannedQty vs baseCrossQty | 检查越库分配计算逻辑 |
+| 分拣任务下发失败 | DPS/语音系统接口不可用 | 检查 `DpsAndVoicePushService` 推送日志 |
+| 分拣任务状态异常 | 状态推进逻辑问题 | 检查 `SortTaskStatusEnum` 状态机 |
+| RF分拣提交失败 | 任务被其他用户占用 | 检查 `occupyTask()`/`clearOccupyTask()` |
+| 分拣下发状态不更新 | Consumer消费失败 | 检查 `PickPushResultStatusConsumer` 日志 |
+
+### 6.29 复核与发运业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 复核状态计算错误 | 复核数量与订单数量不匹配 | 检查 `ReviewStatusEnum.calculationStatus()` |
+| 满箱确认失败 | boxState状态问题 | 检查 `ReviewRecordServiceImpl.rfInputBoxConfirm()` |
+| 发运确认失败 | 订单状态非TO_SHIPPING | 检查 `DeliveryServiceImpl.deliveryShip()` 状态校验 |
+| 装车单创建失败 | TMS调度单已存在 | 检查 `AllocationLoading` 表重复数据 |
+| 发运回传TMS失败 | TMS接口不可用 | 检查 `tmsStatus` 回传状态 |
+| 发运后库存未扣减 | 分布式事务未提交 | 检查 undo_log 表 |
+
+### 6.30 Apollo与ShardingSphere配置问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| @Value注入null | namespace未配置或key错误 | 检查 Apollo namespace配置 |
+| 配置变更不生效 | 未触发@RefreshScope | 检查Bean是否有 `@RefreshScope` 注解 |
+| ShardingException | 分片键缺失或路由错误 | 检查SQL是否包含tenantCode |
+| 跨库查询失败 | 不支持跨分片JOIN | 改为单分片查询或使用广播表 |
+| 分页查询慢 | 深度分页跨分片合并 | 优化为游标分页或限制分页深度 |
+| 分片键为空 | MyMetaObjectHandler未填充tenantCode | 检查 `insertFill()` 方法 |
+
+### 6.31 RocketMQ消息队列问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 消息未消费 | Consumer Group配置错误 | 检查 `@RocketMQMessageListener` 的 topic/tag/consumerGroup |
+| 重复消费 | 消费失败未确认 | 检查消费逻辑是否幂等 |
+| 事务消息不一致 | 本地事务成功但MQ未提交 | 检查 `AbstractRocketMQLocalTransactionListener.executeLocalTransaction` |
+| 消息堆积 | 消费速度跟不上 | 检查 Consumer 是否有慢操作，考虑批量消费 |
+| 消息发送失败 | Broker不可用 | 检查 `WmsMessageHelper.sendMessageInTransaction()` 异常日志 |
+| 消费线程耗尽 | 线程池配置过小 | 检查 `consumeThreadMax` 配置 |
+
+## 与 auto-wms 集成
+
 
 
 ## 修复策略模板
