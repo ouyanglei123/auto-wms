@@ -73,35 +73,69 @@ const SKILL_DIR_INDICATOR = 'SKILL.md';
 export class SkillIndexer {
   /**
    * @param {string} skillsDir - Skills 根目录路径
+   * @param {Object} [options] - 配置选项
+   * @param {number} [options.cacheTTL] - 缓存 TTL（默认 24 小时）
+   * @param {boolean} [options.incremental] - 启用增量索引（默认 true）
    */
-  constructor(skillsDir) {
+  constructor(skillsDir, options = {}) {
     this.skillsDir = skillsDir;
     this.logger = logger;
     this._cache = null;
     this._cacheTimestamp = 0;
-    this._cacheTTL = 24 * 60 * 60 * 1000; // 24 小时
+    this._cacheTTL = options.cacheTTL ?? 24 * 60 * 60 * 1000;
+    this._incremental = options.incremental ?? true;
+    this._prewarmed = false;
+  }
+
+  /**
+   * 预热索引（异步构建缓存，不阻塞主流程）
+   */
+  prewarm() {
+    if (this._prewarmed) return;
+    this._prewarmed = true;
+
+    setTimeout(async () => {
+      try {
+        await this.buildIndex({ useCache: false, incremental: false });
+        this.logger.debug('Skill 索引预热完成');
+      } catch (error) {
+        this.logger.warn(`索引预热失败: ${error.message}`);
+      }
+    }, 100);
   }
 
   /**
    * 构建索引（扫描目录 + 提取 frontmatter）
    * @param {Object} [options] - 选项
    * @param {boolean} [options.useCache=true] - 是否使用缓存
+   * @param {boolean} [options.incremental] - 增量模式（只检测变更文件）
    * @returns {Promise<SkillIndexResult>}
    */
   async buildIndex(options = {}) {
     const useCache = options.useCache ?? true;
+    const incremental = options.incremental ?? this._incremental;
 
     // 检查缓存 + 文件变更检测
     if (useCache && this._cache && Date.now() - this._cacheTimestamp < this._cacheTTL) {
-      // 检查文件是否有变更
-      const currentHashes = await this._computeFileHashes();
-      const cachedHashes = this._cache.file_hashes?.files || [];
+      if (incremental) {
+        // 增量检测：只检查 mtime 变化的文件
+        const changedFiles = await this._detectChangedFiles();
+        if (changedFiles.length === 0) {
+          this.logger.debug('Skill 索引使用缓存（文件无变更）');
+          return this._cache;
+        }
+        this.logger.debug(`Skill 索引缓存失效（检测到 ${changedFiles.length} 个文件变更）`);
+      } else {
+        // 完整检测
+        const currentHashes = await this._computeFileHashes();
+        const cachedHashes = this._cache.file_hashes?.files || [];
 
-      if (this._hashesEqual(currentHashes, cachedHashes)) {
-        this.logger.debug('Skill 索引使用缓存（文件无变更）');
-        return this._cache;
+        if (this._hashesEqual(currentHashes, cachedHashes)) {
+          this.logger.debug('Skill 索引使用缓存（文件无变更）');
+          return this._cache;
+        }
+        this.logger.debug('Skill 索引缓存失效（检测到文件变更）');
       }
-      this.logger.debug('Skill 索引缓存失效（检测到文件变更）');
     }
 
     if (!(await fs.pathExists(this.skillsDir))) {
@@ -197,6 +231,42 @@ export class SkillIndexer {
     );
 
     return result;
+  }
+
+  /**
+   * 增量检测：快速检测文件变更（基于 mtime）
+   * @returns {Promise<string[]>} 变更文件列表
+   * @private
+   */
+  async _detectChangedFiles() {
+    const changed = [];
+    const cachedFiles = new Map(
+      (this._cache?.file_hashes?.files || []).map((f) => [f.relativePath, f.mtime])
+    );
+
+    if (!(await fs.pathExists(this.skillsDir))) {
+      return changed;
+    }
+
+    const scanDir = async (basePath) => {
+      const entries = await fs.readdir(basePath);
+      for (const entry of entries) {
+        const fullPath = path.join(basePath, entry);
+        const stat = await fs.stat(fullPath);
+
+        if (stat.isFile() && SKILL_FILE_PATTERNS.some((p) => entry.endsWith(p))) {
+          const cachedMtime = cachedFiles.get(entry);
+          if (cachedMtime !== stat.mtimeMs) {
+            changed.push(entry);
+          }
+        } else if (stat.isDirectory()) {
+          await scanDir(fullPath);
+        }
+      }
+    };
+
+    await scanDir(this.skillsDir);
+    return changed;
   }
 
   /**
@@ -408,6 +478,27 @@ export class SkillIndexer {
   clearCache() {
     this._cache = null;
     this._cacheTimestamp = 0;
+    this._prewarmed = false;
+  }
+
+  /**
+   * 主动失效缓存（强制重建）
+   * @param {string[]} [files] - 指定失效的文件（为空则全部失效）
+   */
+  invalidateCache(files) {
+    if (!files || files.length === 0) {
+      this.clearCache();
+      this.logger.debug('索引缓存已全部失效');
+      return;
+    }
+
+    if (!this._cache?.file_hashes?.files) return;
+
+    const fileSet = new Set(files);
+    this._cache.file_hashes.files = this._cache.file_hashes.files.filter(
+      (f) => !fileSet.has(f.relativePath)
+    );
+    this.logger.debug(`索引缓存已失效 ${files.length} 个文件`);
   }
 }
 
