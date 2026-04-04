@@ -455,3 +455,50 @@ if (req.getSafeFlag()){
 - [x] 安全库存绑定使用独立的单位字段
 - [ ] 增加单位一致性校验
 - [ ] 单元测试覆盖移位单位场景
+
+---
+
+## 六、WMS 开发模式：Feign接口新增的标准流程
+
+> 本模式记录新增外部系统（TMS/GAIA/MES等）→ WMS 接口时的标准开发流程和常见遗漏。
+
+### 6.1 标准开发流程
+
+```
+1. edi Controller → 定义对外 API 入口
+2. edi FeignClient → 定义调用 storage/outbound 等服务的接口
+3. edi FeignClientHystrix → 必须同步添加 fallback 方法（否则编译报错）
+4. storage/outbound FeignStorageController → 定义被调用的端点
+5. storage/outbound Service → 实现业务逻辑
+6. storage/outbound Mapper + XML → SQL 查询
+```
+
+### 6.2 必检清单
+
+| 检查项 | 说明 | 遗漏后果 |
+|--------|------|---------|
+| FeignClient 接口方法 | 定义新方法 + @PostMapping 路径 | 无法调用 |
+| **Hystrix Fallback** | 必须在对应 Hystrix 类中添加同名方法 | **编译报错** |
+| 入参校验 | Controller 层做非空/格式校验 | 无效请求穿透到下游 |
+| DTO 类命名 | edi 和下游服务的 DTO 可以独立（JSON 序列化桥接） | 无功能影响 |
+| tenantCode 传递 | 确认外部系统是否通过 Header 携带，否则需显式 setUserInfo | ShardingSphere 路由失败 |
+
+### 6.3 库存查询相关表关联
+
+```
+w_stored_item（库存明细）
+  ├── w_location（库位表）→ location_type（库位类型）
+  │     良品存货位 = 'GOOD_LOCATION'
+  ├── w_batch_attributes（批次属性）→ vendor_code（供应商编码）
+  │     关联键: w_stored_item.batch_id = w_batch_attributes.id
+  └── 关键字段:
+        status = 'AVAILABLE'（可用）
+        freeze_sign = FALSE（解冻）
+        basic_qty = 基本单位数量（汇总用 SUM）
+```
+
+### 6.4 典型实现参考
+
+| 功能 | edi 入口 | Feign 端点 | storage 实现 |
+|------|---------|-----------|-------------|
+| TMS库存查询 | `TmsItemController.queryTmsInventory` | `StorageClient.queryTmsInventoryBySupplier` | `FeignStorageController` → `FeignStorageServiceImpl` |
