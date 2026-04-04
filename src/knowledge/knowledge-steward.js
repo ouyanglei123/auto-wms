@@ -33,10 +33,16 @@ import { classifyContent, CATEGORIES } from './categories.js';
 class KnowledgeSteward {
   /**
    * @param {string} [projectDir] - 项目根目录
+   * @param {Object} [options] - 配置选项
+   * @param {boolean} [options.enableIndex] - 启用搜索索引（默认 true）
    */
-  constructor(projectDir) {
+  constructor(projectDir, options = {}) {
     this.projectDir = projectDir || process.cwd();
     this.insightsDir = path.join(this.projectDir, '.auto', 'insights');
+    this._enableIndex = options.enableIndex ?? true;
+    this._index = null; // 搜索索引缓存
+    this._indexTimestamp = 0;
+    this._indexTTL = 5 * 60 * 1000; // 索引 TTL: 5 分钟
   }
 
   /**
@@ -56,6 +62,78 @@ class KnowledgeSteward {
     }
 
     return this.insightsDir;
+  }
+
+  /**
+   * 构建或获取搜索索引
+   * @returns {Promise<Object>} 索引对象
+   * @private
+   */
+  async _getIndex() {
+    if (!this._enableIndex) return null;
+
+    const now = Date.now();
+    if (this._index && now - this._indexTimestamp < this._indexTTL) {
+      return this._index;
+    }
+
+    await this.ensureStructure();
+    const index = { entries: [], invertedIndex: new Map() };
+
+    for (const cat of CATEGORIES) {
+      const filePath = path.join(this.insightsDir, cat.file);
+      const content = await fs.readFile(filePath, 'utf-8');
+
+      // 按条目分割
+      const entryBlocks = content.split(/^### /m).filter(Boolean);
+
+      for (const block of entryBlocks) {
+        const lines = block.trim().split('\n');
+        const title = lines[0]?.trim() || '';
+        const body = lines.slice(2).join('\n');
+
+        // 提取标签
+        const tagMatch = body.match(/\*\*标签\*\*:\s*(.+)/);
+        const tags = tagMatch
+          ? tagMatch[1].split(',').map((t) => t.trim())
+          : [];
+
+        const entry = {
+          id: `${cat.name}:${title}`,
+          category: cat.name,
+          title,
+          body,
+          tags,
+          timestamp: now
+        };
+
+        index.entries.push(entry);
+
+        // 构建倒排索引
+        const words = `${title} ${body} ${tags.join(' ')}`.toLowerCase().split(/\s+/);
+        for (const word of words) {
+          if (word.length < 2) continue;
+          if (!index.invertedIndex.has(word)) {
+            index.invertedIndex.set(word, []);
+          }
+          index.invertedIndex.get(word).push(entry.id);
+        }
+      }
+    }
+
+    this._index = index;
+    this._indexTimestamp = now;
+    this.logger?.debug(`知识索引已构建: ${index.entries.length} 条目`);
+
+    return index;
+  }
+
+  /**
+   * 使索引失效（内容变更后调用）
+   */
+  invalidateIndex() {
+    this._index = null;
+    this._indexTimestamp = 0;
   }
 
   /**
@@ -86,6 +164,9 @@ class KnowledgeSteward {
       // 追加到文件
       const filePath = path.join(this.insightsDir, matchedCategory.file);
       await fs.appendFile(filePath, '\n' + entry, 'utf-8');
+
+      // 使索引失效
+      this.invalidateIndex();
 
       logger.info(`知识已保存到 ${matchedCategory.file}`);
 
@@ -139,14 +220,29 @@ class KnowledgeSteward {
   /**
    * 搜索知识条目
    * @param {string} query - 搜索关键词
+   * @param {Object} [options] - 搜索选项
+   * @param {boolean} [options.useIndex=true] - 使用索引加速
+   * @param {string[]} [options.tags] - 按标签筛选
+   * @param {string} [options.category] - 按分类筛选
    * @returns {Promise<Array<{category: string, matches: string[]}>>}
    */
-  async search(query) {
+  async search(query, options = {}) {
+    const useIndex = options.useIndex ?? true;
+    const { tags, category } = options;
+
+    // 使用索引搜索
+    if (useIndex && this._enableIndex) {
+      return this._searchWithIndex(query, { tags, category });
+    }
+
+    // 回退到原始搜索
     await this.ensureStructure();
     const lowerQuery = query.toLowerCase();
     const results = [];
 
     for (const cat of CATEGORIES) {
+      if (category && cat.name !== category) continue;
+
       const filePath = path.join(this.insightsDir, cat.file);
       const content = await fs.readFile(filePath, 'utf-8');
 
@@ -166,6 +262,99 @@ class KnowledgeSteward {
     }
 
     return results;
+  }
+
+  /**
+   * 使用索引搜索
+   * @param {string} query - 搜索关键词
+   * @param {Object} filters - 筛选条件
+   * @returns {Promise<Array>}
+   * @private
+   */
+  async _searchWithIndex(query, filters) {
+    const index = await this._getIndex();
+    if (!index) return [];
+
+    const lowerQuery = query.toLowerCase();
+    const queryWords = lowerQuery.split(/\s+/).filter((w) => w.length >= 2);
+
+    // 收集匹配的条目 ID
+    const matchedIds = new Set();
+    for (const word of queryWords) {
+      const ids = index.invertedIndex.get(word) || [];
+      ids.forEach((id) => matchedIds.add(id));
+    }
+
+    // 过滤并返回结果
+    const matchedEntries = index.entries.filter((entry) => {
+      if (!matchedIds.has(entry.id)) return false;
+      if (filters.category && entry.category !== filters.category) return false;
+      if (filters.tags && filters.tags.length > 0) {
+        const hasTag = filters.tags.some((t) => entry.tags.includes(t));
+        if (!hasTag) return false;
+      }
+      return true;
+    });
+
+    // 按相关性排序（标题匹配优先）
+    return matchedEntries.sort((a, b) => {
+      const aTitle = a.title.toLowerCase().includes(lowerQuery) ? 1 : 0;
+      const bTitle = b.title.toLowerCase().includes(lowerQuery) ? 1 : 0;
+      return bTitle - aTitle;
+    });
+  }
+
+  /**
+   * 按标签搜索知识条目
+   * @param {string|string[]} tags - 标签或标签列表
+   * @returns {Promise<Array>}
+   */
+  async searchByTags(tags) {
+    const tagList = Array.isArray(tags) ? tags : [tags];
+    return this.search('', { tags: tagList, useIndex: true });
+  }
+
+  /**
+   * 获取知识关联推荐
+   * @param {string} entryId - 基准条目 ID
+   * @param {number} [limit=5] - 返回数量
+   * @returns {Promise<Array>} 推荐的条目
+   */
+  async getRelated(entryId, limit = 5) {
+    const index = await this._getIndex();
+    if (!index) return [];
+
+    const entry = index.entries.find((e) => e.id === entryId);
+    if (!entry) return [];
+
+    // 计算共现词
+    const entryWords = new Set(
+      `${entry.title} ${entry.body}`.toLowerCase().split(/\s+/).filter((w) => w.length >= 2)
+    );
+
+    // 找出共享词汇最多的条目
+    const scores = [];
+    for (const other of index.entries) {
+      if (other.id === entryId) continue;
+
+      const otherWords = new Set(
+        `${other.title} ${other.body}`.toLowerCase().split(/\s+/).filter((w) => w.length >= 2)
+      );
+
+      // Jaccard 相似度
+      const intersection = [...entryWords].filter((w) => otherWords.has(w)).length;
+      const union = new Set([...entryWords, ...otherWords]).size;
+      const similarity = union > 0 ? intersection / union : 0;
+
+      if (similarity > 0.1) {
+        scores.push({ entry: other, similarity });
+      }
+    }
+
+    return scores
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, limit)
+      .map((s) => ({ ...s.entry, similarity: s.similarity }));
   }
 
   /**
