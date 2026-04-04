@@ -191,7 +191,7 @@ export async function uninstall(selectedComponents) {
         const targetPath = path.join(claudeDir, component.target);
 
         if (await fs.pathExists(targetPath)) {
-          // 只有 commands/auto 目录可以整体删除（这是 Auto WMS 独占的）
+          // 只有 commands/wms 目录可以整体删除（这是 Auto WMS 独占的）
           if (componentKey === 'commands') {
             await fs.remove(targetPath);
             removedFiles.push(targetPath);
@@ -298,7 +298,7 @@ async function cleanupEmptyDirs(claudeDir, selectedComponents) {
 
     const targetPath = path.join(claudeDir, component.target);
 
-    // 对于 commands/auto，如果目录为空则删除
+    // 对于 commands/wms，如果目录为空则删除
     if (componentKey === 'commands' && (await fs.pathExists(targetPath))) {
       try {
         const items = await fs.readdir(targetPath);

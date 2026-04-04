@@ -2,10 +2,9 @@
 description: 智能超级命令 - 动态能力发现 + Quest Map + 按规模自动选择执行模式
 ---
 
-# /auto — 智能超级命令
+# /wms:auto — 智能超级命令
 
-> 上下文扫描 → 能力统筹 + Quest Map → 逐关执行 → 整合验证 → 提交 → 知识沉淀
-> 详细设计文档（缓存机制、故障排查、输出模板）：`plugins/builtin/auto-core.md`
+> 上下文扫描 → WMS 领域加载 → 能力统筹 + Quest Map → 逐关执行 → 整合验证 → 提交 → 知识沉淀
 
 ---
 
@@ -46,7 +45,7 @@ Read(".auto/cache/capability-snapshot.json")
 
 如存在且有效（<24h + 文件数匹配）→ 跳到 1.4 输出报告。
 如不存在/过期/失效 → 执行 1.1-1.3 完整扫描。
-（缓存验证逻辑详见 auto-core.md v8.1）
+（缓存验证：检查 created_at 时间戳 < 86400s 且 file_counts 与当前目录文件数一致）
 
 ### 1.0a 上下文压缩检查（长对话场景）
 
@@ -220,7 +219,7 @@ if (relatedKnowledge && relatedKnowledge.length > 0) {
 Read(".auto/cache/pattern-cards.json")
 ```
 
-验证 head_hash + 工作区脏检查 + 7天TTL。命中则传缓存给 quest-designer 跳过已缓存文件。（详见 auto-core.md）
+验证 head_hash + 工作区脏检查 + 7天TTL。命中则传缓存给 quest-designer 跳过已缓存文件。
 
 ### 2.1 调用 quest-designer
 
@@ -263,7 +262,7 @@ v4 要求：
 ### 2.2 更新模式卡缓存
 
 从 quest-designer 返回中提取 `<!--PATTERN_CARDS_START-->...<!--PATTERN_CARDS_END-->`
-→ upsert 合并 → Write `.auto/cache/pattern-cards.json`（详见 auto-core.md）
+→ upsert 合并 → Write `.auto/cache/pattern-cards.json`
 
 > 产出后等待用户确认，可迭代修改。
 
@@ -303,13 +302,13 @@ v4 要求：
 
 ## PHASE 6: LEARN — 知识沉淀
 
-更新记忆。如改了核心架构 → 建议用户重新运行 `/auto` 并在需求中包含"更新 REPO_MAP.md"。
+更新记忆。如改了核心架构 → 建议用户重新运行 `/wms:auto` 并在需求中包含"更新 REPO_MAP.md"。
 
 ---
 
 ## 核心原则
 
-1. **一个入口** — `/auto` 完成所有事情
+1. **一个入口** — `/wms:auto` 完成所有事情
 2. **智能缓存** — 不变数据一天只扫一次，节省 ~80% Token
 3. **统筹设计** — quest-designer 基于完整能力清单自主分析
 4. **按规模执行** — 小任务不浪费，大任务自动并行

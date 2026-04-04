@@ -128,6 +128,7 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 盘点盈亏异常 | 盘点期间有出入库操作 | 检查 `CountLocationLockServiceImpl` 锁范围 |
 | 收货数量校验失败 | 超出PO数量 | 检查 `RcptTaskServiceImpl` 数量校验逻辑 |
 | 编码生成失败 | 编码规则配置缺失或序列号耗尽 | 检查 `CodeServiceImpl` + BasicDataClient |
+| 收货报 `no such unit` | 商品单位(inboundUnitId)在basicdata中不存在 | 检查 `QualityInspectionRcptServiceImpl:520`，查 rcpt_task_detail.inbound_unit_id → basicdata.item_unit |
 
 ### 6.7 WMS 错误码速查
 

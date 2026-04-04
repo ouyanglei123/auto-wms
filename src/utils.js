@@ -136,10 +136,10 @@ export const COMPONENTS = {
     pattern: '*.md'
   },
   commands: {
-    name: 'auto 斜杠指令',
-    description: '斜杠命令（/auto, /auto:route, /auto:doctor 等）',
+    name: 'wms 斜杠指令',
+    description: '斜杠命令（/wms:auto, /wms:route, /wms:doctor 等）',
     source: 'commands',
-    target: 'commands/auto',
+    target: 'commands/wms',
     pattern: '*.md'
   },
   skills: {
