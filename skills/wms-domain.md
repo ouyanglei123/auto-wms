@@ -2136,3 +2136,181 @@ Boolean execSuccess = GlobalLockHelper.lock(
     -1L);
 ```
 
+---
+
+## 37. 集货与装箱业务
+
+### 37.1 集货业务 (Consolidation)
+
+**核心实体**:
+| Entity | 说明 |
+|--------|------|
+| `ConsolidationMaster` | 集货主表 (w_consolidation_master) |
+| `ConsolidationDetail` | 集货明细表 (w_consolidation_detail) |
+
+**集货状态机**:
+| 状态 | 含义 |
+|------|------|
+| STOCKING | 备货中 |
+| STOCK_UP_COMPLETED | 备货完成 |
+| OUT_STOCK | 已出库 |
+| SHIPPED | 已发运 |
+| CANCELED | 取消 |
+
+**RF集货摘果流程**:
+```
+托盘校验 → 集货位校验 → 库区配置校验 → 构建集货任务
+```
+
+### 37.2 装箱业务 (PackBox)
+
+**核心实体**:
+| Entity | 说明 |
+|--------|------|
+| `PackBoxMaster` | 装箱主表 (w_pack_box_master) |
+| `PackBoxItem` | 装箱明细表 (w_pack_box_item) |
+
+**装箱状态** (PackBoxStatusEnum):
+| 状态 | 含义 |
+|------|------|
+| NORMAL | 正常 |
+| ADD_SUB | 有增减 |
+| REMOVE | 已清空 |
+
+**满箱逻辑**: remainingQty ≤ 0 → 自动标记REMOVE
+
+**箱规校验**: `ValidatePackServiceImpl.checkPackOccupied()`
+- 箱码格式: F+年月日+4位流水
+- 不能绑定其他门店/交货日期
+
+---
+
+## 38. RF手持终端业务
+
+### 38.1 RF业务分布
+
+| 服务 | RF Controller数量 | 主要业务 |
+|------|------------------|---------|
+| outbound | 22个 | 拣货/分拣/越库/复核/打包 |
+| inbound | 3个 | 收货/上架/卸货费/AGV |
+| inside | 2个 | 盘点/移位 |
+| basicdata | 2个 | 绑定拣货位/角标盘点 |
+
+**预估RF总接口数: 约200+**
+
+### 38.2 RF核心流程
+
+**RF收货** (InboundReceiveController):
+```
+扫描PO单号 → 扫描托盘号 → 扫描商品编码 → 输入数量 → 确认收货
+```
+
+**RF上架** (PutawayController):
+```
+扫描托盘 → 推荐库位 → 确认目标库位 → 上架确认
+```
+
+**RF拣货** (RfPickController - 63接口):
+| 拣货模式 | 第一屏 | 第二屏 | 第三屏 | 第四屏 |
+|---------|-------|-------|-------|-------|
+| 提总拣货 | 客户集合 | 任务列表 | 库位显示 | 商品扫描 |
+| 摘果拣货 | 客户集合 | 门店列表 | 分配托盘 | 商品扫描 |
+| 边拣边分 | 客户集合 | 任务列表 | 扫描库位 | 核对信息 |
+
+### 38.3 RF通用设计模式
+
+**多屏状态机**: 每屏对应独立接口，屏幕间通过Request Body传递上下文
+
+**分布式锁**: 订单级别锁(receiptNumber/orderNumber)
+
+**占用-释放**: `occupy()`/`clearOccupyTask()` 防止并发冲突
+
+**双重响应**: `DataResponseHelper.fail(jumpInfo)` 返回前端跳转信息
+
+---
+
+## 39. 数据导入导出 (Excel)
+
+### 39.1 导入架构
+
+**核心组件**:
+| 组件 | 说明 |
+|------|------|
+| `Excel.BaseListener<T>` | 抽象基类，定义模板方法 |
+| `EasyExcel` | Alibaba EasyExcel 解析 |
+| `ImportFileRecords` | 导入记录表 |
+
+**导入流程**:
+```
+Excel模板下载 → 数据上传 → MQ异步触发 → EasyExcel解析 → 数据校验 → 批量插入 → 错误文件生成
+```
+
+**关键注解**:
+```java
+@ExcelProperty(value = "列名")      // Excel列映射
+@ExcelIgnore                         // 导入时忽略
+converter = BooleanYesConverter.class  // 类型转换
+```
+
+### 39.2 导出架构
+
+**分页导出**: 4000条/页，单仓最多100万条
+
+**多Sheet**: 按仓库分Sheet，支持压缩包导出
+
+### 39.3 设计模式
+
+| 模式 | 应用 |
+|------|------|
+| 监听器模式 | 39个监听器(Listener) |
+| 模板方法 | BaseListener定义导入骨架 |
+| 批量处理 | BATCH_COUNT=100 |
+| MQ异步 | ImportFileEventConsumer |
+| Redis锁 | 防止并发导入冲突 |
+| Seata事务 | 分布式一致性保证 |
+
+---
+
+## 40. 商品溯源与GAIA对接
+
+### 40.1 溯源数据模型
+
+**溯源明细表**: `t_item_traceability_detail`
+- oriTraceNo (原始溯源码)
+- operationType (INBOUND/OUTBOUND/INVENTORY_PROFIT等)
+- batchCode/manufacturer/productionDate
+
+**溯源汇总表**: `t_item_traceability_sum`
+- 按oriTraceNo+manufacturer聚合
+- initQty/nowQty/inboundQty/outboundQty
+
+### 40.2 GAIA对接 (edi-service)
+
+**核心接口**:
+| 服务 | 方法 | 用途 |
+|------|------|------|
+| PushGaiaService | pushBindingBox() | 推送绑箱信息 |
+| PushGaiaService | sendSortingTaskQuantityMsg() | 直发播种推送 |
+| GaiaRelatedService | queryInventoryToGaia() | GAIA库存查询 |
+| InboundCallbackBatchInfoService | 入库批次回传 | PO收货→GAIA |
+| OutboundCallbackBatchInfoService | 出库批次回传 | SO发运→GAIA |
+
+### 40.3 回传流程
+
+**入库回传**:
+```
+收货完成 → MQ消息 → Job发送 → HTTP POST → GAIA
+```
+
+**出库回传**:
+```
+发运完成 → OutboundShipmentBatchInfo → Job发送 → HTTP POST → GAIA
+```
+
+### 40.4 溯源省内发运
+
+**流程**: 出库单发运 → TracingOutboundInfo → Job → 溯源系统
+- Apollo配置: appId/secretKey/URL
+- MQ Topic: WMS_TRACEABILITY_ITEM_FROM_WMS_TOPIC
+
+

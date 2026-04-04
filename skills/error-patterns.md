@@ -397,6 +397,51 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 消息发送失败 | Broker不可用 | 检查 `WmsMessageHelper.sendMessageInTransaction()` 异常日志 |
 | 消费线程耗尽 | 线程池配置过小 | 检查 `consumeThreadMax` 配置 |
 
+### 6.32 集货与装箱业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 集货任务创建失败 | 客户集合未配置集货库区 | 检查 `CollectionConsolidationConfig` |
+| 集货备货完成失败 | 存在未备货完成的订单 | 检查 `stockCompletion()` 校验逻辑 |
+| 托盘退还失败 | 状态非OUT_STOCK | 检查 `ConsolidationDetailServiceImpl.returnToStorage()` |
+| 装箱满箱失败 | remainingQty > 0 | 检查 `PackBoxItemServiceImpl.execFullBox()` |
+| 箱码格式错误 | 非F+年月日+4位流水格式 | 检查 `ValidatePackServiceImpl.checkPackOccupied()` |
+| 箱码绑定冲突 | 箱码被其他门店/交货日期占用 | 检查箱码占用校验逻辑 |
+
+### 6.33 RF手持终端问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| RF接口超时 | 网络不稳定或查询太慢 | 优化SQL或增加超时时间 |
+| RF扫描失败 | 条码格式/系统不匹配 | 检查商品条码配置 |
+| RF任务无法领取 | 任务被其他用户占用 | `TaskLockUserCleanJob` 25分钟后自动清理 |
+| RF状态丢失 | 多屏状态机上下文丢失 | 检查Request Body传递的参数 |
+| RF锁获取失败 | 分布式锁被占用 | 检查 `GlobalLockHelper` 锁等待时间 |
+
+### 6.34 数据导入导出问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 导入内存溢出 | 大数据量全部加载到内存 | 降低BATCH_COUNT，分批处理 |
+| 导入并发冲突 | 同一商品多个单位同时导入 | 检查Redis分布式锁 |
+| 导入数据不一致 | Seata事务部分回滚 | 检查undo_log表 |
+| 类型转换失败 | "是/否"无法转Boolean | 添加 `BooleanYesConverter` |
+| 导入记录丢失 | MQ消息未消费 | 检查 `ImportFileEventConsumer` |
+| 导出文件过大 | 单Sheet数据量超限 | 分仓库/分Sheet导出 |
+| 导出重复 | 未加Redis锁 | 检查 `ExcelController.export()` 锁逻辑 |
+
+### 6.35 溯源与GAIA对接问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 溯源码为空 | batchIndexKey未生成 | 调用 `BatchAttributesService.refreshBatchIndexKey()` |
+| 获取站点名称失败 | Apollo未配置appId/secretKey | 检查 `TRACE_TO_THE_SOURCE_*` 配置 |
+| 省内发运推送失败 | 签名生成错误或URL错误 | 检查 `TRACEABILITY_PROVINCIAL_URL` |
+| 入库批次回传失败 | 收货任务未完成(盲收状态) | 代码会跳过，等待任务完成 |
+| 出库批次TraceCode为空 | batchIndexKey未生成 | 检查批次表 `batch_attributes` |
+| 货主同步失败 | 枚举值不匹配 | 校验 `CompanyTypeEnum` |
+| MQ发送失败 | RocketMQ连接异常 | 重试机制 `FixedRetryStrategy(3, 500)` |
+
 ## 与 auto-wms 集成
 
 
