@@ -153,7 +153,36 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 入库回传失败 | 收货任务状态非COMPLETE | 检查 `InboundCallbackBatchInfoServiceImpl` 收货状态校验 |
 | 奈雪单位转换失败 | pieceLoad为null | 检查 `basicdata.item_unit` 表的 piece_load 字段 |
 
-### 6.9 WMS 错误码速查
+### 6.9 盘点业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 盘点库位锁获取失败 | 静盘库位已被其他操作占用 | 检查 `CountLocationLockServiceImpl` + `w_count_location_lock` 表 |
+| 盘点录入被阻塞 | Redis分布式锁900s未释放 | 检查 `CountAddRedisLockHandler1` 锁逻辑 |
+| 盘点库存与实际不符 | 盘点期间有出入库操作 | 检查 `CountFinishRpcStorageHandler5` 库存处理 |
+| 盘点冻结未回滚 | 取消盘点时库存未解冻 | 检查 `CountCancelRpc` 的回滚逻辑 |
+| 责任链断链 | Handler返回false导致后续不执行 | 检查 `AbstractCountCreateHandler.doCreateCount()` 断链位置 |
+
+### 6.10 补货业务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 补货数量计算错误 | 空库位算成非空或反之 | 检查 `ReplenishServiceImpl.checkStoregBatch()` 条件判断 |
+| 多批次不补货 | 批次一致性校验失败 | 检查生产日期+保质期+过期日期是否一致 |
+| 补货完成波次未触发 | `afterReplenishmentAutoAllocation()` 调用失败 | 检查 Feign 调用日志 |
+| 紧急补货取消失败 | 回调 outbound 失败 | 检查 `cancelEmergencyReplenish()` 异常处理 |
+
+### 6.11 分布式事务问题
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 全局锁超时 | 业务执行超timeoutMills | 检查 `undo_log` 表 log_status=1 的记录 |
+| 分支事务部分回滚 | Seata Server不可用 | 检查 TC 服务状态和日志 |
+| undo_log堆积 | 回滚日志未清理 | `DELETE FROM undo_log WHERE log_status=0 AND log_created < DATE_SUB(NOW(), INTERVAL 7 DAY)` |
+| AT模式不支持的操作 | 执行了无主键DELETE/跨库JOIN | 检查 `CustomRMHandler` 自定义处理 |
+| 嵌套事务不生效 | 传播行为配置错误 | 检查 Spring `@Transactional(propagation=)` 配置 |
+
+### 6.12 WMS 错误码速查
 
 | 错误码范围 | 所属模块 | 定位文件 |
 |-----------|---------|---------|

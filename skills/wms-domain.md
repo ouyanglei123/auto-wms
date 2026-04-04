@@ -765,7 +765,180 @@ inOutMessage.getInfExpPostReqs().removeAll(collect);
 
 ---
 
-## 13. 数据量级
+## 13. 盘点业务（inside）DDD责任链模式
+
+### 13.1 五条责任链
+
+| 责任链 | Handler数量 | 核心功能 |
+|--------|------------|---------|
+| `CreateCountChainService` | 19 | 盘点单创建（CREATE→NEW） |
+| `ActiveCountChainService` | 4 | 盘点激活（NEW→COUNTING） |
+| `CountAddChainService` | 13 | RF盘点录入/增补 |
+| `FinishCountChainService` | 10 | 盘点完成（COUNTING→COUNT_FINISH） |
+| `CancelCountChainService` | 6 | 盘点取消（任意状态→CANCELED） |
+
+### 13.2 盘点状态机
+
+```
+TEMP → NEW → COUNTING → COUNT_FINISH → 完成
+  │                    ↓
+  └─────── CANCELED ◅─┘
+```
+
+### 13.3 创建流程（19步核心Handler）
+
+```
+1. CountMqParamHandler1         获取盘点单参数
+2. CountMasterStorageHandler2    查询storage服务库存
+3-9. 校验与数据准备            库存变化/空盘点/批次校验
+10. CountLocationLockHandler10 ★ 添加盘点库位锁（静盘加锁，动盘不加）
+11-13. 构建盘点单              主单+明细入库
+14-16. 库存关联处理
+17. CountRpcHandler17 ★        RPC冻结库存（明盘）
+18-19. 异常处理               空库位/EXCEL化
+```
+
+### 13.4 两层锁架构
+
+```
+第一层：盘点单锁 (Redis)
+  key = countNumber, 超时900s
+
+第二层：库位锁 (CountLocationLock表)
+  静盘(盲盘/明盘)才加锁，动盘不加锁
+```
+
+### 13.5 与Storage服务交互
+
+| 场景 | Feign方法 | 功能 |
+|------|-----------|------|
+| 创建-查询 | `getStoredItemByIds()` | 获取库存详情 |
+| 创建-冻结 | `countCreateStorageDeal()` | 明盘冻结库存 |
+| 完成-处理 | `getStoredItemByIds()` | 库存校验 |
+| 取消-回滚 | `outSaveStoredItemByLock()` | 出库解锁 |
+
+---
+
+## 14. 补货业务体系
+
+### 14.1 补货状态机
+
+```
+NEW(待领取) → REPLENISHMENT(补货中) → REPLENISH_FINISH(完成)
+      ↓
+REPLENISH_CANCEL(取消)
+```
+
+### 14.2 补货全流程
+
+```
+【阶段1: 建议补货生成】
+SuggestReplenishmentController.createReplenishmentForSuggest()
+         ↓
+1. 获取安全库存信息 → BasicDataService.getSafetyStoredNew()
+2. 获取商品最小安全库存 → EfficiencyFeignService.queryItemSafetyQtyNew()
+3. 过滤有效补货数据
+4. 批次一致性校验（生产日期+保质期+过期日期必须一致）
+5. 创建补货任务
+
+【阶段2: 优先级排序】
+ReplenishPrioritySortJob（定时任务）
+         ↓
+OutboundFeignService.getReplenishSortResult()
+→ 写入 w_replenish_priority_sort 表
+
+【阶段3: RF补货执行】
+ReplenishMasterController.dealRFReplenish()
+         ↓
+StorageFeignService.outSaveStoredItemByLock() 出库扣减
+StorageFeignService.inSaveStoredItemByLock() 入库增加
+→ 补货完成触发波次自动分配
+```
+
+### 14.3 补货数量计算
+
+| 场景 | 条件 | 补货数量 |
+|------|------|----------|
+| 空库位 | 拣货位无库存 | planQty = maxQty |
+| 非空库位 | 库存 < minQty 且批次一致 | planQty = maxQty - 当前库存 |
+| 多批次 | 存在多批次 | 不补货 |
+
+### 14.4 关键Feign
+
+| Feign | 服务 | 用途 |
+|-------|------|------|
+| `afterReplenishmentAutoAllocation()` | outbound | 补货完成触发波次 |
+| `cancelEmergencyReplenish()` | outbound | 取消紧急补货回调 |
+| `getFeifnReplenishStorage()` | storage | 查询存货位库存 |
+| `outSaveStoredItemByLock()` | storage | 出库扣减 |
+| `inSaveStoredItemByLock()` | storage | 入库增加 |
+
+---
+
+## 15. 分布式事务（Seata AT模式）
+
+### 15.1 @GlobalTransactional分布
+
+| 服务 | 核心场景 | 使用数量 |
+|------|---------|---------|
+| inside | 移位、盘点、补货、冻结、盈亏 | ~90处 |
+| outbound | 波次分配、拣货、复核、分拣 | ~70处 |
+| storage | 库存操作、批次属性 | ~25处 |
+
+### 15.2 典型事务边界
+
+**移位业务**：
+```java
+@GlobalTransactional
+public ScreenInfoRsp moveBdLocForthConfirm(MoveBdLocThirdReq req)
+    │
+    ├── 出库扣减 → StorageFeignService.outSaveStoredItemByLock()
+    ├── 入库增加 → StorageFeignService.inSaveStoredItemByLock()
+    ├── 解除移位锁
+    └── 保存移位记录 → StorageFeignService.addMoveRecord()
+```
+
+**波次分配**：
+```java
+@GlobalTransactional(timeoutMills = 600000)  // 10分钟
+public void waveAutoAllocation(...)
+    │
+    ├── 查询可用库存 → StorageService
+    ├── 预占库存 → StorageService.manualGeneralAllocationInventory()
+    ├── 保存分配结果 → AllocationLoading
+    └── 更新出库单状态
+```
+
+### 15.3 超时配置建议
+
+| 业务场景 | 超时时间 | 说明 |
+|---------|---------|------|
+| 简单库存操作 | 60s | 出库/入库单一操作 |
+| 中等复杂度 | 180s | 波次分配、单品移位 |
+| 复杂业务流程 | 300s | 复核、发货确认 |
+| 批量操作 | 600s | 批量波次创建 |
+
+### 15.4 undo_log机制
+
+```
+Phase 1: 执行阶段
+  前镜像(BEFORE) → 执行SQL → 后镜像(AFTER) → 写入undo_log
+
+Phase 2: 回滚阶段
+  读取undo_log → 解析rollback_info → 执行反向SQL → 恢复前镜像
+```
+
+### 15.5 常见问题与排查
+
+| 问题 | 排查方法 |
+|------|---------|
+| 全局锁超时 | `SELECT * FROM undo_log WHERE log_status = 1` |
+| 分支回滚失败 | 检查对应库的undo_log |
+| AT模式不支持 | 无主键DELETE/跨库JOIN不支持 |
+
+---
+
+## 16. 数据量级
 
 | 服务 | Controller | ServiceImpl | Entity | Feign | MQ | Job | Enum |
 |------|-----------|-------------|--------|-------|-----|-----|------|
