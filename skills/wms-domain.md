@@ -345,7 +345,198 @@ CREATE → ALLOCATED → IN_PROGRESS → COMPLETED
 
 ---
 
-## 7. 数据量级
+## 7. 出库全链路（outbound）服务调用详解
+
+### 7.1 完整链路：订单 → 波次 → 分配 → 拣货 → 分拣 → 装箱 → 集货 → 复核 → 发运
+
+```
+【阶段1: 订单进入】
+EDI/SAP → OutboundMaster(NEW) → OutboundDetail
+         ↑
+         └─ Feign: EdiService.getIsExistNoPushWmsOrder()
+
+【阶段2: 波次创建】定时触发 (AutoCreateWaveJob 每3分钟)
+AutoCreateWaveJob → WaveAutoAllocationServiceImpl.autoAllocationByWaves()
+         ↓
+WaveMaster(NEW) → WaveDetail
+         ↑
+Feign调用链:
+├─ BasicDataService.getAutoWaveCollection()  获取自动波次任务
+├─ EdiService.getIsExistNoPushWmsOrder()    查询未推送订单
+└─ OutboundMasterService.getOrderIdByCollectionId() 查询待波次订单
+
+【阶段3: 库位分配】
+WaveAllocationServiceImpl → AllocationLoading → AllocationLoadingDetail
+         ↓
+Feign调用链:
+├─ StorageService.selectPickTaskInventory()       查询库存
+├─ StorageService.manualGeneralAllocationInventory() 提总拆分库存
+├─ BasicDataService.getItemMasterByItemId()      获取商品信息
+└─ BasicDataService.selectTemporaryLocation()    查询分拣暂存库位
+
+【阶段4: 拣货】
+┌─────────────────┬──────────────────┬────────────────┐
+│  提总(PickType=1) │  摘果(PickType=2) │  RF拣货        │
+├─────────────────┼──────────────────┼────────────────┤
+│PickTaskGeneral  │ PickTaskFruit     │ RfPickController│
+└─────────────────┴──────────────────┴────────────────┘
+         ↓
+Feign调用链:
+├─ StorageService.outSaveStoredItemByLock() 出库库存扣减
+├─ InsideFeignService.urgentCreateReplenish() 紧急补货
+└─ BasicDataService.checkItemScan() 判断商品是否需要扫描
+
+【阶段5: 分拣】
+SortTaskController → SortTask → SortTaskDetail
+         ↓
+Feign调用链:
+├─ BasicDataService.selectSortBindedConfigInfo() 查询客户绑定分拣位
+└─ EdiService.pushDataToMultimedia() 推送语音/DPS
+
+【阶段6: 装箱】
+PackBoxMasterController → PackBoxItem
+         ↑
+Feign: ContainerService (shsc-bizcore-wps-service)
+
+【阶段7: 集货】
+ConsolidationMaster → ConsolidationDetail
+         ↑
+Feign: BasicDataService.getConsolidationConfigByCollectionCodeAndZoneCode()
+
+【阶段8: 复核】
+ReviewRecordController → ReviewRecord
+         ↑
+Feign: BasicDataService.getItemMasterByItemId()
+
+【阶段9: 发运】
+DeliveryController → AllocationLoading (装车单)
+         ↓
+Feign调用链:
+├─ StorageService.outboundShipStorageDeal() 出库发运库存处理
+├─ EdiService.insertInfExpPost() 出库回传SAP/GAIA
+├─ DispatchFeign (TMS调度) / BusinessTmsFeign
+└─ BasicDataService.getCustomerById() 获取客户信息
+```
+
+### 7.2 关键Feign调用汇总
+
+| Feign Client | 被调用服务 | 关键方法 | 调用场景 |
+|-------------|----------|---------|---------|
+| BasicDataService | basicdata | `getAutoWaveCollection()` | 波次创建 |
+| BasicDataService | basicdata | `getItemMasterByItemId()` | 商品信息 |
+| BasicDataService | basicdata | `selectSortBindedConfigInfo()` | 分拣配置 |
+| StorageService | storage | `selectPickTaskInventory()` | 分配-查库存 |
+| StorageService | storage | `outSaveStoredItemByLock()` | 拣货-扣库存 |
+| StorageService | storage | `outboundShipStorageDeal()` | 发运-出库 |
+| InsideFeignService | inside | `urgentCreateReplenish()` | 紧急补货 |
+| InsideFeignService | inside | `generalPickCheckLot()` | 混批校验 |
+| EdiService | edi | `insertInfExpPost()` | 发运回传 |
+| DispatchFeign | TMS | `dispatchShip()` | 调度发运 |
+
+### 7.3 MQ消息流转
+
+| Topic | Tag | Consumer | 触发场景 |
+|-------|-----|----------|---------|
+| WMS_INOUT_TOPIC | WMS_PICK_TAG | RocketPickConsumer | 拣货完成 |
+| WMS_INOUT_TOPIC | WMS_ALLOCATION_TAG | RocketAllocationConsumer | 分配完成 |
+| WMS_INOUT_TOPIC | WMS_SHIP_TAG | RocketShipConsumer | 发运完成 |
+| WMS_SORT_RECORD_TOPIC | - | CreateSortRecordConsumer | 分拣记录创建 |
+
+### 7.4 性能瓶颈与故障点
+
+| 风险点 | 位置 | 影响 |
+|--------|------|------|
+| 分布式锁超时 | AutoCreateWaveJob 锁900s | 波次创建阻塞 |
+| 库存冻结不释放 | WaveAllocationServiceImpl | 库存虚减 |
+| MQ消息丢失 | RocketPickConsumer | 状态不推进 |
+| Feign超时 | BasicDataService | 分配/分拣延迟 |
+
+---
+
+## 8. 移位业务（inside）深度分析
+
+### 8.1 移位核心代码位置
+
+| 文件 | 路径 | 说明 |
+|------|------|------|
+| MoveBdServiceImpl | `inside/biz/service/impl/MoveBdServiceImpl.java` | 2095行，移位绑定/解绑核心 |
+| MoveRecord | `inside/biz/entity/MoveRecord.java` | 移位记录表 w_move_record |
+| MoveDetail | `inside/biz/entity/MoveDetail.java` | 移位明细表 w_move_detail |
+
+### 8.2 moveBdLocForthConfirm() 移位确认流程
+
+```
+1. 前置校验 (第458-476行)
+   ├── 源/目标库位编码非空
+   └── 目标库位AGV预占校验
+
+2. 安全库存处理 (第478-488行)
+   ├── safeFlag=false: 判断是否需要录入安全库存
+   └── safeFlag=true: 获取 safeItemUnit (仅用于绑定)
+
+3. 温层校验 (第521-540行)
+   └── 目标库位温层 = 商品温层
+
+4. 创建 MoveRecord (第640-685行)
+   ├── 设置移位数量、单位、库位
+   └── 【关键】第654-658行: safeFlag不影响移位单位(已修复)
+
+5. 执行库存移动 (第720-721行)
+   └── unplannedMoveService.moveLocBdStorage()
+
+6. 拣货位绑定/解绑 (第727-943行)
+   └── 4种库位类型组合场景
+```
+
+### 8.3 拣货位绑定 4 种场景
+
+| 场景 | 源库位 | 目标库位 | 操作 |
+|------|--------|----------|------|
+| 1 | 拣货位 | 存货位 | 解绑原库位 |
+| 2 | 拣货位 | 拣货位 | 解绑原库位 → 绑定目标库位 |
+| 3 | 存货位 | 拣货位 | 绑定目标库位 |
+| 4 | 新零售 | 新零售同产线 | 保持原绑定不变 |
+
+### 8.4 单位概念与 pieceLoad
+
+| 单位类型 | 字段 | 说明 |
+|---------|------|------|
+| 基本单位 | `isBasicUnit=true` | 库存计量最小单位 |
+| 包装单位 | `pieceLoad > 1` | 1包装 = pieceLoad个基本单位 |
+| 安全库存单位 | `safeUnitId` | 绑定拣货位警戒单位 |
+
+**单位转换公式**:
+```java
+// 用户输入 → 基本单位
+basicInputMoveQty = inputMoveQty × pieceLoad
+
+// 示例: 3件(pieceLoad=6) → 18基本单位
+```
+
+### 8.5 与 storage 服务交互
+
+```java
+// 移位核心流程 moveLocBdStorage()
+1. 获取锁定的库存 → storageFeignService.getStoredItemByIds()
+2. 执行出库(减少) → storageFeignService.outSaveStoredItemByLock()
+3. 执行入库(增加) → storageFeignService.inSaveStoredItemByLock()
+4. 解除移位锁   → unLockMoveLocBdStorage()
+5. 保存移位记录 → storageFeignService.addMoveRecord()
+6. 同步批次属性 → moveBatchAttributesService.formatMoveBatchAttributes()
+```
+
+### 8.6 核心设计模式
+
+| 模式 | 应用位置 | 说明 |
+|------|---------|------|
+| 分布式事务 | `@GlobalTransactional` | Seata AT模式，出库入库原子性 |
+| 库位类型组合 | equals判断 | 4种库位类型决定不同行为 |
+| 安全库存优先级 | result > safeFlag > basicUnit | 拣货位绑定单位选择顺序 |
+| 分布式锁 | Redisson RLock | 库存级别锁，超时900s |
+
+---
+
+## 9. 数据量级
 
 | 服务 | Controller | ServiceImpl | Entity | Feign | MQ | Job | Enum |
 |------|-----------|-------------|--------|-------|-----|-----|------|
