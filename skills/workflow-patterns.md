@@ -330,3 +330,128 @@ git diff HEAD -- "*.env*" "*credentials*" "*secret*"
 - linux.do 社区验证数据
 - Vibe Coding 实战策略
 - 社区实测：AI 自我审查降低 60% Bug 率
+
+---
+
+## 五、WMS 生产问题排查案例：移位解绑拣货位单位错乱
+
+> 本案例记录了一次完整的生产问题排查流程，包括问题现象、根因分析、代码定位和修复方案。
+
+### 5.1 问题描述
+
+| 项目 | 内容 |
+|------|------|
+| 问题现象 | 用户操作移位解绑拣货位时，输入"1箱"，但系统记录为"1罐" |
+| 影响范围 | 物料 4046379（红豆罐头，850G*12罐/箱），南昌仓库 |
+| 业务场景 | 拣货位解绑后重新绑定安全库存 |
+| 操作类型 | `moveBdLocForthConfirm`（RF移位确认） |
+
+### 5.2 问题排查流程
+
+#### 第一步：获取操作日志
+
+根据日志参数定位问题入口：
+```json
+{
+  "inputMoveQty": 1,
+  "unitId": 8746179352391942,    // 箱(Z34)
+  "safeFlag": true,
+  "safeUnitId": 8746179313969670, // 罐(CL9)
+  "safeMinItemUnitQty": 12,
+  "safeMaxItemUnitQty": 24
+}
+```
+
+#### 第二步：定位代码位置
+
+通过日志找到方法 `moveBdLocForthConfirm`，位于 `MoveBdServiceImpl.java`
+
+#### 第三步：分析代码逻辑
+
+关键代码（第652-684行）：
+```java
+ItemUnit itemUnit = basicFeignService.getItemUnitById(req.getUnitId()).getData();
+
+// 【问题代码】如果是安全库存，则获取页面传入的安全库存
+if (req.getSafeFlag()){
+    itemUnit = safeItemUnit;  // 把移位单位替换成了安全库存单位（罐）
+}
+moveRecord.setMoveQty(req.getInputMoveQty());
+// ...
+moveRecord.setUnitCode(itemUnit.getUnitCode());
+moveRecord.setUnitId(itemUnit.getId());
+
+// 数量转换为基本单位
+BigDecimal basicInputMoveQty = BigDecimalUtil.mul(req.getInputMoveQty(), itemUnit.getPieceLoad());
+```
+
+### 5.3 根因分析
+
+| 步骤 | 用户操作 | 系统行为 | 问题 |
+|------|---------|---------|------|
+| 1 | 选择"箱"为单位 | 获取 unitId=箱 | ✅ 正确 |
+| 2 | 输入数量"1" | inputMoveQty=1 | ✅ 正确 |
+| 3 | 设置安全库存标志 | safeFlag=true | ✅ 正确 |
+| 4 | - | itemUnit被替换为safeItemUnit（罐） | ❌ 错误 |
+| 5 | - | 移位记录的单位变成"罐" | ❌ 错误 |
+
+**根因**：`safeFlag=true` 时，代码错误地将用户选择的移位单位（箱）替换成了安全库存单位（罐），导致移位记录的单位与用户选择的单位不一致。
+
+### 5.4 数据验证
+
+根据数据库记录确认：
+```
+unit_code: CL9 (罐)
+move_qty: 1.000
+```
+
+但用户选择的是"箱"（Z34），输入的是"1"。
+
+### 5.5 修复方案
+
+**修改文件**：`MoveBdServiceImpl.java` 第654-657行
+
+**修复前**：
+```java
+if (req.getSafeFlag()){
+    itemUnit = safeItemUnit;
+}
+```
+
+**修复后**：
+```java
+// 【修复】移位单位应该使用用户选择的单位，而不是被安全库存单位替换
+// if (req.getSafeFlag()){
+//     itemUnit = safeItemUnit;
+// }
+```
+
+**修复说明**：
+- 安全库存绑定逻辑使用 `safeItemUnit`（第780-784行），不受影响
+- 移位记录使用用户选择的单位，符合用户意图
+
+### 5.6 排查要点总结
+
+| 排查要点 | 说明 |
+|---------|------|
+| 日志是关键 | 操作日志包含完整的请求参数，是定位问题的第一步 |
+| 单位要区分 | 移位单位(safeFlag前)和安全库存单位(safeFlag后)是两个概念 |
+| 数据验证 | 数据库记录和用户描述不一致时，以数据库为准 |
+| 上下文完整 | 理解业务场景（解绑/绑定拣货位）有助于定位问题 |
+
+### 5.7 相关代码位置速查
+
+| 功能 | 文件 | 方法/行号 |
+|------|------|----------|
+| 移位确认 | `MoveBdServiceImpl.java` | `moveBdLocForthConfirm()` |
+| 安全库存绑定 | `MoveBdServiceImpl.java` | 第780-804行 |
+| 移位记录保存 | `MoveBdServiceImpl.java` | 第640-684行 |
+| 库存表 | `w_stored_item` | basic_qty, basic_unit_id |
+| 移位记录表 | `w_move_record` | move_qty, unit_code |
+
+### 5.8 防复发检查清单
+
+- [x] 移位单位不应受安全库存标志影响
+- [x] 安全库存绑定使用独立的单位字段
+- [ ] 增加单位一致性校验
+- [ ] 单元测试覆盖移位单位场景

@@ -129,6 +129,7 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 收货数量校验失败 | 超出PO数量 | 检查 `RcptTaskServiceImpl` 数量校验逻辑 |
 | 编码生成失败 | 编码规则配置缺失或序列号耗尽 | 检查 `CodeServiceImpl` + BasicDataClient |
 | 收货报 `no such unit` | 商品单位(inboundUnitId)在basicdata中不存在 | 检查 `QualityInspectionRcptServiceImpl:520`，查 rcpt_task_detail.inbound_unit_id → basicdata.item_unit |
+| 移位解绑拣货位时数量/单位不匹配 | safeFlag=true时itemUnit被替换为safeItemUnit | `MoveBdServiceImpl.moveBdLocForthConfirm()` 第654-657行，不应该在移位时替换单位 |
 
 ### 6.7 WMS 错误码速查
 
