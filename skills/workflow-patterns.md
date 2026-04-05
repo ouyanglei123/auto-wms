@@ -323,6 +323,47 @@ git diff HEAD -- "*.env*" "*credentials*" "*secret*"
 
 ---
 
+## 十一、测试稳定化模式：先契约，后优化
+
+> 适用于系统升级后出现的批量测试失败场景。核心目标不是“把测试改绿”，而是先区分测试是否过时，再判断是否存在真实实现回归。
+
+### 11.1 处理顺序
+
+```
+1. 跑定向/全量测试，拿到失败清单
+2. 判断失败类型：测试过时 / 实现回归 / 混合问题
+3. 先修路径、目录、入口等结构漂移
+4. 再修真实契约问题（返回结构、缓存行为、失效逻辑）
+5. 先跑定向验证，再跑全量回归
+6. 将可复用模式沉淀到 memory / workflow-patterns
+```
+
+### 11.2 失败类型判断表
+
+| 类型 | 典型信号 | 处理方式 |
+|------|---------|---------|
+| 测试过时 | 目录变更、入口改名、常量名变化 | 先对齐测试夹具和断言 |
+| 实现回归 | 同一接口新旧分支返回结构不一致 | 修实现，保持旧契约稳定 |
+| 缓存缺陷 | 第二次调用未命中缓存、目录型资源总被判定变更 | 统一 key 与失效规则 |
+| 输出截断 | 全量测试信息过多，终端无法直接看完 | 输出 JSON 报告后结构化解析 |
+
+### 11.3 契约修复原则
+
+| 场景 | 推荐做法 | 避免做法 |
+|------|---------|---------|
+| 搜索接口增强 | 保持原 `search()` 返回结构，新增 `searchEntries()` 之类细粒度方法 | 直接修改旧方法返回 shape |
+| 索引优化接入 | 在优化分支上适配旧调用方格式 | 让 indexed / non-indexed 分支各返回一套结构 |
+| 缓存增量检测 | 使用规范化 `relativePath` 作为唯一 key | 用文件名或局部路径做 key |
+| 全量验证 | 先定向验证修复点，再跑全量回归 | 每改一点就盲跑全量且不做归因 |
+
+### 11.4 本次项目中的典型案例
+
+| 模块 | 问题 | 修复模式 |
+|------|------|---------|
+| `KnowledgeSteward` | indexed 搜索分支返回 entry 列表，破坏 `search()` 既有 grouped contract | 恢复 `search()` 旧契约，新增 entry-level API |
+| `SkillIndexer` | `_detectChangedFiles()` 用文件名查缓存，目录型 skill 总是假失效 | 改为规范化 `relativePath` + 补充删除检测 |
+| Vitest 回归 | 终端输出过长导致失败信息不完整 | 使用 `--reporter=json --outputFile=.vitest-report.json` 汇总 |
+
 ## 来源
 
 - Claude Code 官方文档：Plan Mode 四种工作流
@@ -635,3 +676,103 @@ public class XxxConsumer implements RocketMQListener<XxxMessage> {
 | 事务消息 | 两阶段提交时检查LocalTransactionListener | 本地事务与MQ不一致 |
 | 消费线程数 | consumeThreadMax配置 | 线程耗尽导致消费阻塞 |
 | 死信队列 | 消费失败16次进入DLQ | 消息丢失 |
+
+---
+
+## 十、Agent 工程化模式：MCP 分层与目录化
+
+> 本模式用于约束 auto-wms 内部能力的分层方式。目标不是重写现有系统，而是用 MCP 视角统一 Prompt、Router、Resource、Tool、Learning 的职责边界，降低混乱和重复建设。
+
+### 10.1 最小分层骨架
+
+```
+用户意图
+  -> Prompt Catalog
+  -> Router / Registry
+  -> Resource Catalog 装配上下文
+  -> Tool Catalog 执行动作
+  -> Audit / Memory / Learning 沉淀
+```
+
+### 10.2 五层职责表
+
+| 层 | 核心职责 | 在 auto-wms 中的对应物 | 设计要求 |
+|----|---------|----------------------|---------|
+| Prompt Catalog | 承接用户意图，定义任务入口 | `wms:auto`、review/bug/learning 入口 | 薄 Prompt，只定义任务目标、边界和调用协议 |
+| Router / Registry | 发现、排序、选择能力 | intent matcher、canonical router、agent registry、skill indexer | 只做选择与编排，不承载底层动作 |
+| Resource Catalog | 提供只读上下文 | `skills/wms-domain.md`、`skills/error-patterns.md`、`skills/workflow-patterns.md`、`skills/feign-mq-map.md`、`skills/table-relations.md`、`memory/MEMORY.md` | 稳定、只读、可装配、适合进入上下文 |
+| Tool Catalog | 执行动作并返回动态结果 | 检索、扫描、diff 审查、质量检查、学习提取脚本 | 输入输出清晰，可失败，可追踪，副作用必须显式 |
+| Audit / Learning | 记录结果并形成复用资产 | continuous-learning、instinct candidates、memory、knowledge steward | 任务结束后自动沉淀，避免一次性经验丢失 |
+
+### 10.3 分层判断规则
+
+| 问题 | 判断 | 归属 |
+|------|------|------|
+| 这个能力主要是在“提供信息”吗？ | 是，且只读稳定 | Resource |
+| 这个能力必须执行后才有结果吗？ | 是，依赖参数/运行时 | Tool |
+| 这个能力是在组织一类任务吗？ | 是，面向用户意图 | Prompt |
+| 问题其实是“该选谁来做”吗？ | 是，涉及发现/排序/编排 | Router / Registry |
+| 这个能力是在记录经验供下次复用吗？ | 是，任务完成后沉淀 | Audit / Learning |
+
+### 10.4 设计口诀
+
+- 入口统一，路由独立，知识只读，动作收敛，学习闭环。
+- 薄 Prompt，厚 Schema，清晰 Resource。
+- 先分层，再扩展；先边界，再自动化。
+
+### 10.5 常见误区与修正
+
+| 误区 | 表现 | 修正方式 |
+|------|------|---------|
+| 把查询都做成 Tool | 静态知识也走执行链路 | 只读稳定内容优先归为 Resource |
+| 把复杂流程塞成巨型 Tool | 检索、执行、编排、副作用全混在一起 | 拆成 Prompt + Router + Resource + Tool |
+| Prompt 越写越厚 | 把选择逻辑和实现细节写进入口 | Prompt 只保留任务协议，底层细节下沉到 Router/Tool schema |
+| Router 侵入实现 | 路由层直接操作底层资源或写业务逻辑 | Router 只负责发现、排序、选择 |
+| 没有 Learning 闭环 | 每次任务都从头开始 | 在任务完成后沉淀 memory / instinct / pattern |
+
+### 10.6 风险分级（供 Agent 自动调用参考）
+
+| 等级 | 类型 | 示例 |
+|------|------|------|
+| L0 | 静态只读 | 读取知识库、读取 memory、读取架构索引 |
+| L1 | 动态只读 | 搜代码、查状态、跑只读分析 |
+| L2 | 本地可写 | 更新 memory、生成补丁、修改本地文件 |
+| L3 | 外部可见写入 | 发消息、创建 PR、推送代码、调用共享系统写接口 |
+| L4 | 高风险不可逆 | 删除数据、覆盖共享状态、强制破坏性操作 |
+
+### 10.7 可观测性主链路
+
+```
+Prompt -> Router -> Resource 装配 -> Tool 调用 -> Result -> Audit/Trace -> Learning
+```
+
+最少应记录：
+1. 为什么选择这个 Prompt / Tool
+2. 当时装配了哪些 Resource
+3. Tool 的输入输出和失败点
+4. 是否产生副作用
+5. 哪些结论被沉淀到 memory / instinct
+
+### 10.8 当前项目的最小落地策略
+
+1. 保留 `wms:auto` 作为统一高层入口，不急于拆散。
+2. 先建立 Prompt/Resource/Tool 的目录意识，不急于全面协议化。
+3. 新增能力时，先判断分层，再决定是否新建 Tool。
+4. 对知识文件优先做 Resource 化管理，对脚本优先做 Tool 化管理。
+5. 任何学习类任务完成后，优先沉淀到 `workflow-patterns.md` 或 `MEMORY.md`。
+
+### 10.9 何时应该新建 Tool
+
+- 动作本身有独立价值
+- 输入输出可以稳定定义
+- 会被重复调用
+- 与现有 Tool 边界清晰
+- 值得单独授权、追踪、审计
+
+### 10.10 何时不该新建 Tool
+
+- 只是某个 Resource 的另一种视图
+- 只是已有 Tool 的参数组合
+- 只是 Prompt 的轻微变体
+- 只是 Router 的选择逻辑变化
+- 尚未形成稳定输入输出边界

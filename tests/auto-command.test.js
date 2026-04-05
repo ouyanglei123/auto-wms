@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const AUTO_MD_PATH = path.join(__dirname, '..', 'commands', 'auto.md');
+const AUTO_MD_PATH = path.join(__dirname, '..', 'commands', 'wms', 'auto.md');
 
 describe('auto.md integration', () => {
   let content;
@@ -39,7 +39,7 @@ describe('auto.md integration', () => {
     });
 
     it('should preserve other Glob scans (commands, agents, plugins)', () => {
-      expect(content).toMatch(/Glob\(["']?\$HOME\/\.claude\/commands\/auto\/\*\.md["']?\)/);
+      expect(content).toMatch(/Glob\(["']?\$HOME\/\.claude\/commands\/wms\/\*\.md["']?\)/);
       expect(content).toMatch(/Glob\(["']?\$HOME\/\.claude\/agents\/\*\.md["']?\)/);
       expect(content).toMatch(/Glob\(["']?\$HOME\/\.claude\/plugins\/\*\*\/\*\.md["']?\)/);
     });

@@ -11,7 +11,7 @@ import { McpToolRegistry } from './mcp-client.js';
 /**
  * MCP Server 默认工具
  */
-const DEFAULT_TOOLS = [
+export const DEFAULT_TOOLS = [
   {
     name: 'wms:lookup',
     description: '在 WMS 代码库中查找指定关键词的代码位置',
@@ -19,7 +19,10 @@ const DEFAULT_TOOLS = [
       type: 'object',
       properties: {
         keyword: { type: 'string', description: '搜索关键词（如：出库、波次、分配）' },
-        service: { type: 'string', description: '微服务名称（outbound/inbound/basicdata/inside/storage/edi）' }
+        service: {
+          type: 'string',
+          description: '微服务名称（outbound/inbound/basicdata/inside/storage/edi）'
+        }
       },
       required: ['keyword']
     }

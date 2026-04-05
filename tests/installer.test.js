@@ -50,9 +50,9 @@ describe('installer.js', () => {
     await fs.ensureDir(testClaudeDir);
     await fs.ensureDir(testSourceDir);
 
-    // commands: source='commands', target='commands/auto', pattern='*.md'
-    await fs.ensureDir(path.join(testSourceDir, 'commands'));
-    await fs.writeFile(path.join(testSourceDir, 'commands', 'auto.md'), '# Auto Command v2');
+    // commands: source='commands/wms', target='commands/wms', pattern='*.md'
+    await fs.ensureDir(path.join(testSourceDir, 'commands', 'wms'));
+    await fs.writeFile(path.join(testSourceDir, 'commands', 'wms', 'auto.md'), '# Auto Command v2');
 
     // agents: source='agents', target='agents', pattern='*.md'
     await fs.ensureDir(path.join(testSourceDir, 'agents'));
@@ -115,14 +115,14 @@ describe('installer.js', () => {
 
       expect(result.installedFiles.length).toBeGreaterThan(0);
       const content = await fs.readFile(
-        path.join(testClaudeDir, 'commands', 'auto', 'auto.md'),
+        path.join(testClaudeDir, 'commands', 'wms', 'auto.md'),
         'utf-8'
       );
       expect(content).toContain('# Auto Command v2');
     });
 
     it('should skip existing files when force=false (non-recursive, commands)', async () => {
-      const targetFile = path.join(testClaudeDir, 'commands', 'auto', 'auto.md');
+      const targetFile = path.join(testClaudeDir, 'commands', 'wms', 'auto.md');
       await fs.ensureDir(path.dirname(targetFile));
       await fs.writeFile(targetFile, '# Old Content');
 
@@ -136,7 +136,7 @@ describe('installer.js', () => {
     });
 
     it('should create backup when force=false and backup=true (non-recursive)', async () => {
-      const targetFile = path.join(testClaudeDir, 'commands', 'auto', 'auto.md');
+      const targetFile = path.join(testClaudeDir, 'commands', 'wms', 'auto.md');
       await fs.ensureDir(path.dirname(targetFile));
       await fs.writeFile(targetFile, '# Old Content');
 
@@ -159,7 +159,7 @@ describe('installer.js', () => {
     });
 
     it('should overwrite existing files when force=true (non-recursive)', async () => {
-      const targetFile = path.join(testClaudeDir, 'commands', 'auto', 'auto.md');
+      const targetFile = path.join(testClaudeDir, 'commands', 'wms', 'auto.md');
       await fs.ensureDir(path.dirname(targetFile));
       await fs.writeFile(targetFile, '# Old Content');
 
@@ -173,7 +173,7 @@ describe('installer.js', () => {
     });
 
     it('should not create backup when force=true', async () => {
-      const targetFile = path.join(testClaudeDir, 'commands', 'auto', 'auto.md');
+      const targetFile = path.join(testClaudeDir, 'commands', 'wms', 'auto.md');
       await fs.ensureDir(path.dirname(targetFile));
       await fs.writeFile(targetFile, '# Old Content');
 

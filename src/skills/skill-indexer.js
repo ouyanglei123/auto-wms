@@ -248,6 +248,8 @@ export class SkillIndexer {
       return changed;
     }
 
+    const currentFiles = new Set();
+
     const scanDir = async (basePath) => {
       const entries = await fs.readdir(basePath);
       for (const entry of entries) {
@@ -255,9 +257,11 @@ export class SkillIndexer {
         const stat = await fs.stat(fullPath);
 
         if (stat.isFile() && SKILL_FILE_PATTERNS.some((p) => entry.endsWith(p))) {
-          const cachedMtime = cachedFiles.get(entry);
+          const relativePath = path.relative(this.skillsDir, fullPath).replace(/\\/g, '/');
+          currentFiles.add(relativePath);
+          const cachedMtime = cachedFiles.get(relativePath);
           if (cachedMtime !== stat.mtimeMs) {
-            changed.push(entry);
+            changed.push(relativePath);
           }
         } else if (stat.isDirectory()) {
           await scanDir(fullPath);
@@ -266,7 +270,14 @@ export class SkillIndexer {
     };
 
     await scanDir(this.skillsDir);
-    return changed;
+
+    for (const cachedPath of cachedFiles.keys()) {
+      if (!currentFiles.has(cachedPath)) {
+        changed.push(cachedPath);
+      }
+    }
+
+    return [...new Set(changed)];
   }
 
   /**
