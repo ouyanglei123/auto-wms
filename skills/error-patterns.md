@@ -1,7 +1,7 @@
 ---
 name: error-patterns
 description: 常见错误模式速查 - 编译错误、运行时错误、测试失败、CI/CD 故障的根因分析和速修方案
-version: 2.0.0
+version: 2.1.0
 author: auto-wms
 tags: [error, debugging, patterns, build-fix, troubleshooting]
 ---
@@ -206,7 +206,43 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 
 ---
 
-## 4. 错误码速查
+## 4. 跨服务调用错误
+
+### 4.1 Feign 调用链路错误
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| inside→basicdata批量超时 | IBasicFeignService方法过多(~95)，任一慢查询拖慢Client | 检查Hystrix超时配置 + 被调方慢SQL |
+| edi→basicdata循环依赖死锁 | 两个服务互相Feign调用且都有@GlobalTransactional | 检查调用方向，避免双向事务 |
+| storage→inside Feign超时 | InsideFeignService方法内有大查询 | 检查`checkBlockedStorageListV2`数据量 |
+| Feign序列化失败 | 两端DTO字段不一致(JSON字段名/类型差异) | 检查调用方和被调方的DTO定义 |
+
+### 4.2 MQ 消费链路错误
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 盘点MQ责任链断链 | 某个Handler异常导致后续Handler不执行 | 检查`AbstractCountCreateHandler.doCreateCount()`断链位置 |
+| WMS_INOUT_TOPIC消息堆积 | Consumer消费慢或不可用 | 检查Consumer日志 + RocketMQ Dashboard |
+| ORDERLY消费延迟 | 前一条消息消费慢阻塞后续消息 | 检查`LocationTouchConsumer`/`CanalConsumer`消费耗时 |
+| 导出Consumer OOM | Excel数据量过大 | 检查导出分页大小(应≤4000) |
+| Tag过滤不生效 | selectorExpression配置错误 | 检查Producer发送的Tag和Consumer的selectorExpression |
+| 事务消息回查失败 | LocalTransactionListener.executeLocalTransaction异常 | 检查本地事务逻辑和回查逻辑 |
+
+### 4.3 数据一致性错误
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| w_stored_item与w_batch_attributes数量不一致 | 分布式事务部分回滚 | 检查undo_log + Seata TC日志 |
+| 移位后库存总量不变但明细异常 | safeFlag导致单位替换 | 检查MoveBdServiceImpl第654-657行 |
+| 盘点完成后库位锁未释放 | 责任链中锁释放Handler未执行 | 检查w_count_location_lock表残留记录 |
+| 补货完成后波次未自动分配 | OutboundFeignService调用失败但未重试 | 检查`afterReplenishmentAutoAllocation`调用日志 |
+| 收货完成但GAIA未回传 | InOutMsgConsume消费失败 | 检查w_inf_exp_post表return_message |
+| 库存快照与实际不一致 | 快照Job执行期间有入库操作 | 检查GetStoredSnapshotJob执行时间和入库操作时间 |
+| w_move_record的move_qty与basic_qty换算错误 | itemUnit被替换导致pieceLoad错误 | 检查移位单位的赋值逻辑 |
+
+---
+
+## 5. 错误码速查
 
 | 错误码范围 | 所属模块 | 定位文件 |
 |-----------|---------|---------|
@@ -218,7 +254,7 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 
 ---
 
-## 5. 修复策略模板
+## 6. 修复策略模板
 
 当 build-fix Agent 遇到错误时，按以下优先级尝试：
 
@@ -230,7 +266,7 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 
 ---
 
-## 6. 与 auto-wms 集成
+## 7. 与 auto-wms 集成
 
 - `/wms:auto` 自动加载此知识库和 `wms-domain.md`
 - quest-designer 在设计 Quest 时可参考反模式警告

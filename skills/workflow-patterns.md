@@ -1,7 +1,7 @@
 ---
 name: workflow-patterns
 description: 开发工作流模式集合 - Plan Mode 工作流、Multi-Agent 编排、根因追踪方法论、10 维度代码审查清单
-version: 1.0.0
+version: 2.0.0
 author: auto-wms
 tags: [workflow, plan-mode, orchestration, root-cause, debugging, patterns, agent, parallel, troubleshooting, review, checklist, quality, self-correction, verification]
 ---
@@ -502,3 +502,136 @@ w_stored_item（库存明细）
 | 功能 | edi 入口 | Feign 端点 | storage 实现 |
 |------|---------|-----------|-------------|
 | TMS库存查询 | `TmsItemController.queryTmsInventory` | `StorageClient.queryTmsInventoryBySupplier` | `FeignStorageController` → `FeignStorageServiceImpl` |
+
+---
+
+## 七、WMS 开发模式：状态机变更的标准流程
+
+> 本模式记录修改业务状态机时的标准流程，适用于出库单/波次/收货/上架/盘点等所有业务。
+
+### 7.1 状态机变更四步法
+
+```
+1. 确认当前状态 → 枚举类定义（XxxStatusEnum / XxxStateEnum）
+2. 确认目标状态 → 校验前置条件（哪些状态可以转换）
+3. 确认触发条件 → 是用户操作？MQ消息？定时任务？
+4. 确认副作用 → 状态变更后需要联动什么？
+```
+
+### 7.2 核心状态机参考
+
+| 业务 | 枚举类 | 关键状态 | 变更入口 |
+|------|--------|---------|---------|
+| 出库订单 | OutboundStatusEnum | NEW→WAVED→ALLOCATED→PICKING→SHIPPING | OutboundMasterServiceImpl |
+| 波次 | WaveStatusEnum | NEW→ALLOCATED→WORKING→FINISHED | WaveServiceImpl / CreateWaveServiceImpl |
+| 收货任务 | TaskStatusEnum | AWAIT→RECEIVING→RECEIVED | InboundReceiveServiceImpl |
+| 上架 | PutawayStatusEnum | NEW→PUT_SHELVES→PUT_FINISH | PutawayServiceImpl |
+| 移位 | MoveStatusEnum | CREATE→IN_PROGRESS→COMPLETED | MoveBdServiceImpl |
+| 盘点 | CountStatusEnum | TEMP→NEW→COUNTING→COUNT_FINISH | CountMasterServiceImpl |
+| 补货 | ReplenishStatusEnum | NEW→REPLENISHMENT→REPLENISH_FINISH | ReplenishServiceImpl |
+| 质检 | QualityInspectionStatusEnum | NO_NEED→PENDING→PARTIALLY→DONE | QualityInspectionRecordServiceImpl |
+| 分拣 | SortTaskStatusEnum | NEW→CLAIMED→SORTING→FINISH | SortTaskServiceImpl |
+| 集货 | ConsolidationStatusEnum | STOCKING→STOCK_UP_COMPLETED→OUT_STOCK→SHIPPED | ConsolidationMasterServiceImpl |
+
+### 7.3 状态变更防错清单
+
+| 检查项 | 说明 | 遗漏后果 |
+|--------|------|---------|
+| 前置状态校验 | 只有特定状态才能转换到目标状态 | 状态跳跃导致业务混乱 |
+| 并发控制 | Redisson锁 + DB乐观锁(revision) | 并发修改覆盖 |
+| 状态回滚 | 异常时是否需要回退状态 | 中间态卡死 |
+| 联动操作 | 状态变更后触发的下游操作 | 流程中断 |
+| MQ消息 | 状态变更是否需要发MQ通知其他服务 | 跨服务状态不一致 |
+
+---
+
+## 八、WMS 开发模式：分布式事务边界判断
+
+> 本模式记录判断是否需要@GlobalTransactional的决策树和常见陷阱。
+
+### 8.1 决策树
+
+```
+操作是否涉及多个数据库写入？
+├── 否 → 无需分布式事务，用本地 @Transactional
+└── 是 → 写入是否在同一服务内？
+    ├── 是 → 本地 @Transactional 足够
+    └── 否 → 是否通过 Feign 调用？
+        ├── 是 → 需要检查：被调方法是否涉及写操作？
+        │   ├── 只读 → 无需分布式事务
+        │   └── 有写 → 需要 @GlobalTransactional
+        └── 否(MQ) → 使用事务消息（两阶段提交）
+```
+
+### 8.2 已知@GlobalTransactional场景
+
+| 服务 | 方法 | 事务范围 |
+|------|------|---------|
+| outbound | `CrossDetailServiceImpl.crossConfirm()` | 越库确认：出库+库存扣减+入库 |
+| outbound | `PickTaskBeefGeneralServiceImpl` | 牛肉拣货：拣货+称重+库存 |
+| outbound | `WaveAllocationServiceImpl.cancelAllocation()` | 取消分配：释放库存+恢复分配 |
+| inside | `CountMasterServiceImpl.createCount()` | 盘点创建：盘点单+库位锁+库存冻结 |
+| inside | `MoveBdServiceImpl.moveConfirm()` | 移位确认：移位记录+库存出入 |
+| inbound | `InboundReceiveServiceImpl.confirmReceived()` | 收货确认：收货+库存入库 |
+| inbound | `QualityInspectionRecordServiceImpl.confirm()` | 质检确认：质检+批次+库存 |
+
+### 8.3 事务陷阱
+
+| 陷阱 | 说明 | 预防 |
+|------|------|------|
+| @GlobalTransactional嵌套 | 内层事务回滚导致外层也回滚 | 避免嵌套，拆为独立事务 |
+| Seata超时 | 业务逻辑耗时超timeoutMills | 合理设置超时，避免锁内慢操作 |
+| XID丢失 | Feign调用链中XID未传递 | 检查RootContext.bind(xid) |
+| AT模式限制 | 无主键DELETE/跨库JOIN不支持 | 检查SQL是否合规 |
+| undo_log堆积 | 回滚日志未清理 | 定期清理7天前的log_status=0记录 |
+
+---
+
+## 九、WMS 开发模式：MQ消费者开发标准
+
+> 本模式记录新增MQ消费者的标准流程和常见遗漏。
+
+### 9.1 标准开发流程
+
+```
+1. 定义Topic常量 → MessageConst / ExportMessageConst
+2. 定义Tag常量 → 用于同一Topic下的消息过滤
+3. 定义Consumer Group → 命名规范: WMS_{SERVICE}_{BUSINESS}_{GROUP}
+4. 创建Consumer类 → implements RocketMQListener<MessageType>
+5. 添加@RocketMQMessageListener注解
+6. 实现onMessage()方法
+7. 添加幂等校验 → 查 w_callback 表或业务唯一键
+```
+
+### 9.2 注解模板
+
+```java
+@Component
+@RocketMQMessageListener(
+    topic = "TOPIC_NAME",
+    consumerGroup = "CONSUMER_GROUP",
+    selectorExpression = "TAG_NAME",  // 不指定则消费所有Tag
+    consumeMode = ConsumeMode.CONCURRENTLY  // 或 ORDERLY
+)
+public class XxxConsumer implements RocketMQListener<XxxMessage> {
+    @Override
+    public void onMessage(XxxMessage message) {
+        // 1. 幂等校验
+        // 2. 参数校验
+        // 3. 业务处理
+        // 4. 记录回调
+    }
+}
+```
+
+### 9.3 必检清单
+
+| 检查项 | 说明 | 遗漏后果 |
+|--------|------|---------|
+| Topic/Tag一致性 | Producer的Topic+Tag必须与Consumer匹配 | 消息不被消费 |
+| Consumer Group唯一性 | 同一Group内不能有不同Topic的Consumer | 消费混乱 |
+| 幂等处理 | MQ可能重复投递 | 数据重复 |
+| 有序消费需求 | 库存操作等需ORDERLY | 并发消费导致数据不一致 |
+| 事务消息 | 两阶段提交时检查LocalTransactionListener | 本地事务与MQ不一致 |
+| 消费线程数 | consumeThreadMax配置 | 线程耗尽导致消费阻塞 |
+| 死信队列 | 消费失败16次进入DLQ | 消息丢失 |
