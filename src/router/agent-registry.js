@@ -160,6 +160,31 @@ const BUILT_IN_AGENTS = [
     tags: ['core', 'documentation']
   },
   {
+    name: 'installer-manager',
+    displayName: '安装与升级管理',
+    description: '安装、更新、升级、卸载 Auto WMS 及其组件',
+    capabilities: ['install', 'update', 'upgrade', 'uninstall', 'maintenance'],
+    triggerKeywords: [
+      'install',
+      '安装',
+      'update',
+      '更新',
+      'upgrade',
+      '升级',
+      'uninstall',
+      '卸载',
+      'auto-wms',
+      '组件'
+    ],
+    priority: 88,
+    complexity: COMPLEXITY_LEVELS.LOW,
+    fallbackAgents: ['quest-designer'],
+    state: AGENT_STATES.ACTIVE,
+    source: 'built-in',
+    version: '1.0.0',
+    tags: ['core', 'maintenance']
+  },
+  {
     name: 'quest-designer',
     displayName: '闯关大纲设计师 v4',
     description: '完整代码输出的闯关式开发规划',
@@ -415,7 +440,9 @@ export class AgentRegistry {
     if (!options.cascade) {
       for (const [, otherAgent] of this.agents) {
         if (otherAgent.dependencies?.includes(name)) {
-          this.logger.warn(`Agent "${otherAgent.name}" 依赖 "${name}"，请先注销依赖者或使用 cascade`);
+          this.logger.warn(
+            `Agent "${otherAgent.name}" 依赖 "${name}"，请先注销依赖者或使用 cascade`
+          );
           return false;
         }
       }

@@ -24,10 +24,11 @@ describe('AgentRegistry', () => {
     it('should load built-in agents', async () => {
       const count = await registry.initialize();
 
-      expect(count).toBeGreaterThanOrEqual(9);
+      expect(count).toBeGreaterThanOrEqual(10);
       expect(registry.getAgent('quest-designer')).toBeDefined();
       expect(registry.getAgent('architect')).toBeDefined();
       expect(registry.getAgent('tdd-guide')).toBeDefined();
+      expect(registry.getAgent('installer-manager')).toBeDefined();
     });
   });
 
@@ -179,6 +180,13 @@ describe('AgentRegistry', () => {
       const candidates = registry.findCandidates(['xyznonexistent']);
       expect(candidates).toEqual([]);
     });
+
+    it('should match upgrade intent to installer manager', () => {
+      const candidates = registry.findCandidates(['升级', '更新', 'update']);
+
+      expect(candidates.length).toBeGreaterThan(0);
+      expect(candidates[0].agent.name).toBe('installer-manager');
+    });
   });
 
   describe('getFallbackChain', () => {
@@ -256,6 +264,27 @@ describe('CanonicalRouter', () => {
       const result = await router.route('构建失败，TypeScript 编译错误');
 
       expect(result.agent.name).toBe('build-error-resolver');
+    });
+
+    it('should route upgrade intent to installer manager', async () => {
+      const result = await router.route('升级');
+
+      expect(result.agent.name).toBe('installer-manager');
+      expect(result.isDefault).toBe(false);
+    });
+
+    it('should route update phrases to installer manager', async () => {
+      const result = await router.route('更新 auto-wms');
+
+      expect(result.agent.name).toBe('installer-manager');
+      expect(result.isDefault).toBe(false);
+    });
+
+    it('should route english update intent to installer manager', async () => {
+      const result = await router.route('update auto wms');
+
+      expect(result.agent.name).toBe('installer-manager');
+      expect(result.isDefault).toBe(false);
     });
 
     it('should return default for empty intent', async () => {

@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const { execFileMock } = vi.hoisted(() => ({
+  execFileMock: vi.fn()
+}));
+
+vi.mock('child_process', () => ({
+  execFile: execFileMock
+}));
+
 import os from 'os';
 import path from 'path';
 import fs from 'fs-extra';
@@ -11,6 +20,7 @@ import {
   saveInstalledVersion,
   getPackageVersion,
   COMPONENTS,
+  openBrowser,
   compressContext,
   CONTEXT_COMPRESSION
 } from '../src/utils.js';
@@ -197,6 +207,39 @@ describe('utils.js', () => {
         }),
         { spaces: 2 }
       );
+    });
+  });
+
+  describe('openBrowser', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('should open https url without shell interpolation', async () => {
+      execFileMock.mockImplementation((_command, _args, callback) => callback(null));
+
+      const result = await openBrowser('https://example.com/docs?x=1&y=2');
+
+      expect(result).toBe(true);
+      expect(execFileMock).toHaveBeenCalledTimes(1);
+      const [command, args] = execFileMock.mock.calls[0];
+      expect(typeof command).toBe('string');
+      expect(Array.isArray(args)).toBe(true);
+      expect(args.some((arg) => typeof arg === 'string' && arg.includes('&&'))).toBe(false);
+    });
+
+    it('should reject invalid url', async () => {
+      const result = await openBrowser('not-a-url');
+
+      expect(result).toBe(false);
+      expect(execFileMock).not.toHaveBeenCalled();
+    });
+
+    it('should reject non-http protocols', async () => {
+      const result = await openBrowser('file:///tmp/test');
+
+      expect(result).toBe(false);
+      expect(execFileMock).not.toHaveBeenCalled();
     });
   });
 

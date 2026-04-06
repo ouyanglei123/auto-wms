@@ -160,12 +160,21 @@ export async function uninstall(selectedComponents) {
     // 获取已安装的版本信息
     const installedVersion = await getInstalledVersion();
     const installedFiles = installedVersion?.installedFiles || [];
+    const allowedRoots = selectedComponents
+      .map((componentKey) => COMPONENTS[componentKey])
+      .filter(Boolean)
+      .map((component) => path.resolve(claudeDir, component.target));
 
     if (installedFiles.length > 0) {
       // 使用记录的文件列表进行精确删除
       spinner.text = '正在移除已安装的文件...';
 
       for (const filePath of installedFiles) {
+        if (!isManagedInstallPath(filePath, allowedRoots)) {
+          failedFiles.push(filePath);
+          continue;
+        }
+
         try {
           if (await fs.pathExists(filePath)) {
             await fs.remove(filePath);
@@ -264,6 +273,18 @@ async function getSourceFilesList(sourcePath, recursive = false) {
 
   await traverse(sourcePath);
   return files;
+}
+
+function isManagedInstallPath(filePath, allowedRoots) {
+  if (!filePath || !Array.isArray(allowedRoots) || allowedRoots.length === 0) {
+    return false;
+  }
+
+  const resolvedPath = path.resolve(filePath);
+  return allowedRoots.some((root) => {
+    const relative = path.relative(root, resolvedPath);
+    return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  });
 }
 
 /**

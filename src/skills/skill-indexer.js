@@ -301,7 +301,24 @@ export class SkillIndexer {
    * @returns {Promise<{content: string, entry: SkillIndexEntry}|null>}
    */
   async loadContent(relativePath) {
-    const filePath = path.join(this.skillsDir, relativePath);
+    const filePath = path.resolve(this.skillsDir, relativePath);
+    const normalizedRelativePath = path.relative(this.skillsDir, filePath).replace(/\\/g, '/');
+
+    if (
+      normalizedRelativePath.startsWith('..') ||
+      path.isAbsolute(normalizedRelativePath) ||
+      normalizedRelativePath !== relativePath.replace(/\\/g, '/')
+    ) {
+      this.logger.warn(`Skill 路径越界: ${relativePath}`);
+      return null;
+    }
+
+    const index = await this.buildIndex();
+    const entry = index.entries.find((e) => e.relativePath === normalizedRelativePath);
+    if (!entry) {
+      this.logger.warn(`Skill 未在索引中找到: ${relativePath}`);
+      return null;
+    }
 
     if (!(await fs.pathExists(filePath))) {
       this.logger.warn(`Skill 文件不存在: ${filePath}`);
@@ -309,10 +326,7 @@ export class SkillIndexer {
     }
 
     const content = await fs.readFile(filePath, 'utf-8');
-    const index = await this.buildIndex();
-    const entry = index.entries.find((e) => e.relativePath === relativePath);
-
-    return { content, entry: entry || null };
+    return { content, entry };
   }
 
   /**
