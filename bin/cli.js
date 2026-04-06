@@ -8,6 +8,7 @@ import { DOCS_URL } from '../src/config.js';
 import { KnowledgeSteward } from '../src/knowledge/knowledge-steward.js';
 import { InstinctManager } from '../src/learning/instinct-manager.js';
 import { learnFromTaskEvent } from '../src/learning/task-event-learning.js';
+import { learnFromGitHistory } from '../src/learning/git-history-learning.js';
 
 const program = new Command();
 
@@ -293,6 +294,35 @@ program
       }
 
       console.log(chalk.green(`Learned instinct candidate: ${result.result.pattern}`));
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('learn-history')
+  .description('从最近的 Git 历史提取可复用的 instinct 候选')
+  .option('-n, --commits <count>', '分析最近多少次提交')
+  .action(async (options) => {
+    try {
+      const result = await learnFromGitHistory({
+        projectDir: process.cwd(),
+        projectName: 'auto-wms',
+        commitLimit: options.commits
+      });
+
+      if (result.skipped) {
+        console.log(chalk.yellow(result.reason));
+        console.log(chalk.gray(`  已分析提交: ${result.analyzedCommits}`));
+        return;
+      }
+
+      console.log(chalk.green('已从 Git 历史学习 instinct 候选'));
+      console.log(chalk.gray(`  模式: ${result.observation.pattern}`));
+      console.log(chalk.gray(`  已分析提交: ${result.analyzedCommits}`));
+      console.log(chalk.gray(`  观察次数: ${result.result.observations}`));
+      console.log(chalk.gray(`  当前类型: ${result.result.kind}`));
     } catch (error) {
       console.error(chalk.red('错误：'), error.message);
       process.exit(1);
