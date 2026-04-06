@@ -41,8 +41,23 @@ tags: [wms, domain]
 
     await fs.writeFile(
       path.join(tempDir, 'agents', 'custom-helper.md'),
-      `# Custom Helper
+      `---
+name: custom-helper
+description: A custom helper agent.
+tools: Read, Glob
+tags: [custom, helper]
+---
+
+# Custom Helper
 A custom helper agent.
+`,
+      'utf-8'
+    );
+
+    await fs.writeFile(
+      path.join(tempDir, 'agents', 'notes.md'),
+      `# Notes
+This is not an agent manifest.
 `,
       'utf-8'
     );
@@ -93,7 +108,15 @@ A custom helper agent.
     expect(entry).toBeDefined();
     expect(entry.kind).toBe('agent');
     expect(entry.layer).toBe('agent');
+    expect(entry.capabilities).toEqual(['Read', 'Glob']);
+    expect(entry.tags).toEqual(['custom', 'helper']);
     expect(entry.metadata.filePath).toContain('custom-helper.md');
+  });
+
+  it('should ignore markdown files without agent manifest frontmatter', async () => {
+    const entry = await catalog.getCapability('agent:notes');
+
+    expect(entry).toBeNull();
   });
 
   it('should expose default mcp tools as tool-layer capabilities', async () => {

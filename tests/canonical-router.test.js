@@ -30,6 +30,38 @@ describe('AgentRegistry', () => {
       expect(registry.getAgent('tdd-guide')).toBeDefined();
       expect(registry.getAgent('installer-manager')).toBeDefined();
     });
+
+    it('should load custom agents only when manifest frontmatter is present', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'custom-helper.md'),
+        `---
+name: custom-helper
+description: Custom helper agent
+tools: Read, Glob
+tags: [custom, helper]
+---
+
+# Custom Helper
+`,
+        'utf-8'
+      );
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'notes.md'),
+        `# Notes
+This is not an agent.
+`,
+        'utf-8'
+      );
+
+      await registry.initialize();
+
+      const customAgent = registry.getAgent('custom-helper');
+      expect(customAgent).toBeDefined();
+      expect(customAgent.capabilities).toEqual(['Read', 'Glob']);
+      expect(customAgent.tags).toEqual(['custom', 'helper']);
+      expect(registry.getAgent('notes')).toBeNull();
+    });
   });
 
   describe('listAgents', () => {

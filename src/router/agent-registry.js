@@ -13,6 +13,8 @@ import { logger } from '../logger.js';
 import { COMPLEXITY_LEVELS, AGENT_STATES } from './agent-types.js';
 
 const AGENTS_DIR_NAME = 'agents';
+const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)\n---/;
+const SAFE_AGENT_NAME_REGEX = /^[a-z0-9-]+$/;
 
 /**
  * 内置 Agent 清单定义
@@ -561,17 +563,23 @@ export class AgentRegistry {
         const filePath = path.join(agentsDir, file);
         const name = path.basename(file, '.md');
 
-        // 跳过已注册为内置的 Agent
+        if (!SAFE_AGENT_NAME_REGEX.test(name)) {
+          this.logger.warn(`跳过非法 Agent 文件名: ${file}`);
+          continue;
+        }
+
+        const manifest = await this._parseAgentFile(filePath, name);
+        if (!manifest) {
+          continue;
+        }
+
         if (this.agents.has(name)) {
           const existing = this.agents.get(name);
           existing.filePath = filePath;
           continue;
         }
 
-        const manifest = await this._parseAgentFile(filePath, name);
-        if (manifest) {
-          this.agents.set(name, manifest);
-        }
+        this.agents.set(name, manifest);
       }
     } catch (error) {
       this.logger.warn(`加载自定义 Agent 失败: ${error.message}`);
@@ -588,15 +596,26 @@ export class AgentRegistry {
   async _parseAgentFile(filePath, name) {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
-      const firstLine = content.split('\n')[0] || '';
-      const title = firstLine.replace(/^#+\s*/, '').trim() || name;
+      const frontmatter = this._parseFrontmatter(content);
+
+      if (!frontmatter) {
+        this.logger.debug(`跳过未声明清单的 Agent 文件: ${filePath}`);
+        return null;
+      }
+
+      if (frontmatter.name !== name) {
+        this.logger.warn(`Agent 文件名与清单名称不一致: ${filePath}`);
+        return null;
+      }
+
+      const title = this._extractHeading(content) || frontmatter.name;
 
       return {
-        name,
+        name: frontmatter.name,
         displayName: title,
-        description: content.slice(0, 200).trim(),
-        capabilities: [],
-        triggerKeywords: [name],
+        description: frontmatter.description || title,
+        capabilities: frontmatter.tools,
+        triggerKeywords: [frontmatter.name, ...frontmatter.tags],
         priority: 50,
         complexity: COMPLEXITY_LEVELS.MEDIUM,
         fallbackAgents: [],
@@ -604,12 +623,64 @@ export class AgentRegistry {
         source: 'custom',
         version: '1.0.0',
         filePath,
-        tags: []
+        tags: frontmatter.tags
       };
     } catch (error) {
       this.logger.warn(`解析 Agent 文件失败 ${filePath}: ${error.message}`);
       return null;
     }
+  }
+
+  _parseFrontmatter(content) {
+    const match = content.match(FRONTMATTER_REGEX);
+    if (!match?.[1]) {
+      return null;
+    }
+
+    const frontmatter = match[1];
+    const name = this._extractFrontmatterScalar(frontmatter, 'name');
+    if (!name || !SAFE_AGENT_NAME_REGEX.test(name)) {
+      return null;
+    }
+
+    return {
+      name,
+      description: this._extractFrontmatterScalar(frontmatter, 'description'),
+      tools: this._extractFrontmatterList(frontmatter, 'tools'),
+      tags: this._extractFrontmatterList(frontmatter, 'tags')
+    };
+  }
+
+  _extractFrontmatterScalar(frontmatter, key) {
+    return frontmatter.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() || '';
+  }
+
+  _extractFrontmatterList(frontmatter, key) {
+    const inline = frontmatter.match(new RegExp(`^${key}:\\s*\\[(.+)\\]$`, 'm'))?.[1];
+    if (inline) {
+      return inline
+        .split(',')
+        .map((item) => item.trim().replace(/['"]/g, ''))
+        .filter(Boolean);
+    }
+
+    const scalar = this._extractFrontmatterScalar(frontmatter, key);
+    if (!scalar) {
+      return [];
+    }
+
+    return scalar
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  _extractHeading(content) {
+    return content
+      .split('\n')
+      .find((line) => line.trim().startsWith('#'))
+      ?.replace(/^#+\s*/, '')
+      .trim();
   }
 }
 
