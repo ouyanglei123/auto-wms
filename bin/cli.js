@@ -118,7 +118,7 @@ save
   .requiredOption('-c, --content <text>', '要保存的内容')
   .option('-t, --category <type>', '指定分类（prompt, trap, pattern, decision）')
   .option('--tags <tags>', '标签，逗号分隔（如: react,performance）')
-  .option('--no-git', '跳过 git 自动提交')
+  .option('--git', '启用 git 自动提交（默认关闭）')
   .action(async (options) => {
     try {
       const steward = new KnowledgeSteward();
