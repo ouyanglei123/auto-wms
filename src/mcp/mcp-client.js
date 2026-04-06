@@ -9,6 +9,9 @@
  */
 import { EventEmitter } from 'events';
 import { logger } from '../logger.js';
+import { MCP_ERRORS, MCP_PROTOCOL_VERSION, createMcpError, McpToolRegistry } from './mcp-shared.js';
+
+export { MCP_ERRORS, McpToolRegistry } from './mcp-shared.js';
 
 /**
  * MCP 工具描述
@@ -16,17 +19,8 @@ import { logger } from '../logger.js';
  * @property {string} name - 工具名称
  * @property {string} description - 工具描述
  * @property {Object} inputSchema - 输入模式
+ * @property {Function} [handler] - 工具处理函数
  */
-
-/**
- * MCP 错误类型
- */
-const MCP_ERRORS = {
-  CONNECTION_FAILED: 'MCP_CONNECTION_FAILED',
-  TOOL_NOT_FOUND: 'MCP_TOOL_NOT_FOUND',
-  INVOCATION_FAILED: 'MCP_INVOCATION_FAILED',
-  TIMEOUT: 'MCP_TIMEOUT'
-};
 
 /**
  * MCP Client Class
@@ -36,11 +30,15 @@ export class McpClient extends EventEmitter {
    * @param {Object} options - 配置选项
    * @param {string} [options.url] - MCP Server URL
    * @param {number} [options.timeout] - 超时时间（默认 30000ms）
+   * @param {{send: Function}} [options.transport] - 传输适配器
+   * @param {{name?: string, version?: string}} [options.clientInfo] - 客户端信息
    */
   constructor(options = {}) {
     super();
     this.url = options.url || 'http://localhost:3001/mcp';
     this.timeout = options.timeout || 30000;
+    this.transport = options.transport || null;
+    this.clientInfo = this._normalizeClientInfo(options.clientInfo);
     this._connected = false;
     this._tools = new Map();
     this._requestId = 0;
@@ -57,21 +55,20 @@ export class McpClient extends EventEmitter {
     }
 
     try {
-      // 模拟连接（实际实现需要根据具体 MCP Server）
       const response = await this._sendRequest('initialize', {
-        protocolVersion: '1.0',
-        clientInfo: { name: 'auto-wms', version: '0.27.0' }
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        clientInfo: this.clientInfo
       });
 
-      if (response.result === 'ok') {
-        this._connected = true;
-        await this._discoverTools();
-        logger.info(`MCP Client 已连接: ${this.url}`);
-        this.emit('connected');
-        return true;
+      if (!response?.protocolVersion) {
+        throw createMcpError(MCP_ERRORS.CONNECTION_FAILED, 'MCP 初始化失败');
       }
 
-      throw new Error('MCP 初始化失败');
+      this._connected = true;
+      await this._discoverTools();
+      logger.info(`MCP Client 已连接: ${this.url}`);
+      this.emit('connected', response.serverInfo || null);
+      return true;
     } catch (error) {
       logger.error(`MCP 连接失败: ${error.message}`);
       this.emit('error', error);
@@ -83,7 +80,9 @@ export class McpClient extends EventEmitter {
    * 断开连接
    */
   disconnect() {
-    if (!this._connected) return;
+    if (!this._connected) {
+      return;
+    }
 
     this._connected = false;
     this._tools.clear();
@@ -99,14 +98,18 @@ export class McpClient extends EventEmitter {
   async _discoverTools() {
     try {
       const response = await this._sendRequest('tools/list', {});
-      if (response.tools) {
-        for (const tool of response.tools) {
-          this._tools.set(tool.name, tool);
-        }
-        logger.debug(`MCP 工具发现: ${this._tools.size} 个工具`);
+      const tools = Array.isArray(response?.tools) ? response.tools : [];
+      this._tools.clear();
+
+      for (const tool of tools) {
+        this._tools.set(tool.name, tool);
       }
+
+      logger.debug(`MCP 工具发现: ${this._tools.size} 个工具`);
+      return this.listTools();
     } catch (error) {
       logger.warn(`MCP 工具发现失败: ${error.message}`);
+      return [];
     }
   }
 
@@ -149,8 +152,8 @@ export class McpClient extends EventEmitter {
         arguments: args
       });
 
-      if (response.error) {
-        throw new Error(response.error);
+      if (response?.error) {
+        throw this._toError(response.error, `MCP 工具调用失败: ${name}`);
       }
 
       logger.debug(`MCP 工具调用成功: ${name}`);
@@ -168,18 +171,57 @@ export class McpClient extends EventEmitter {
    * @returns {Promise<Object>}
    * @private
    */
-  async _sendRequest(method, _params) {
+  async _sendRequest(method, params = {}) {
+    if (!this.transport?.send) {
+      throw createMcpError(MCP_ERRORS.CONNECTION_FAILED, 'MCP transport 未配置');
+    }
+
     const requestId = ++this._requestId;
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error(`MCP 请求超时: ${method}`));
+        reject(createMcpError(MCP_ERRORS.TIMEOUT, `MCP 请求超时: ${method}`));
       }, this.timeout);
 
-      // 模拟响应（实际实现需要根据具体协议）
-      clearTimeout(timeout);
-      resolve({ result: 'ok', id: requestId });
+      Promise.resolve(this.transport.send(method, params))
+        .then((response) => {
+          clearTimeout(timeout);
+          const normalized = response || {};
+          resolve({ ...normalized, id: normalized.id ?? requestId });
+        })
+        .catch((error) => {
+          clearTimeout(timeout);
+          reject(error);
+        });
     });
+  }
+
+  _normalizeClientInfo(clientInfo = {}) {
+    const normalized = {
+      name: clientInfo.name || 'auto-wms'
+    };
+
+    if (clientInfo.version) {
+      normalized.version = clientInfo.version;
+    }
+
+    return normalized;
+  }
+
+  _toError(payload, fallbackMessage) {
+    if (payload instanceof Error) {
+      return payload;
+    }
+
+    if (typeof payload === 'string') {
+      return new Error(payload);
+    }
+
+    if (payload?.code) {
+      return createMcpError(payload.code, payload.message || fallbackMessage);
+    }
+
+    return new Error(payload?.message || fallbackMessage);
   }
 
   /**
@@ -191,102 +233,6 @@ export class McpClient extends EventEmitter {
   }
 }
 
-/**
- * MCP 工具注册表
- */
-class McpToolRegistry {
-  constructor() {
-    this._tools = new Map();
-    this._middlewares = [];
-  }
-
-  /**
-   * 注册工具
-   * @param {McpTool} tool - 工具描述
-   */
-  register(tool) {
-    if (!tool.name) {
-      throw new Error('工具必须包含 name');
-    }
-    this._tools.set(tool.name, tool);
-    logger.debug(`MCP 工具已注册: ${tool.name}`);
-  }
-
-  /**
-   * 批量注册工具
-   * @param {McpTool[]} tools
-   */
-  registerAll(tools) {
-    for (const tool of tools) {
-      this.register(tool);
-    }
-  }
-
-  /**
-   * 注销工具
-   * @param {string} name
-   */
-  unregister(name) {
-    this._tools.delete(name);
-    logger.debug(`MCP 工具已注销: ${name}`);
-  }
-
-  /**
-   * 获取工具
-   * @param {string} name
-   * @returns {McpTool|null}
-   */
-  get(name) {
-    return this._tools.get(name) || null;
-  }
-
-  /**
-   * 列出所有工具
-   * @returns {McpTool[]}
-   */
-  list() {
-    return Array.from(this._tools.values());
-  }
-
-  /**
-   * 按名称前缀筛选
-   * @param {string} prefix
-   * @returns {McpTool[]}
-   */
-  filterByPrefix(prefix) {
-    return this.list().filter((t) => t.name.startsWith(prefix));
-  }
-
-  /**
-   * 添加中间件
-   * @param {Function} middleware
-   */
-  use(middleware) {
-    this._middlewares.push(middleware);
-  }
-
-  /**
-   * 执行工具调用（经过中间件）
-   * @param {string} name
-   * @param {Object} args
-   * @returns {Promise<Object>}
-   */
-  async execute(name, args) {
-    let ctx = { name, args, tool: this.get(name) };
-
-    for (const mw of this._middlewares) {
-      ctx = await mw(ctx) || ctx;
-    }
-
-    if (!ctx.tool) {
-      throw new Error(`工具不存在: ${name}`);
-    }
-
-    return ctx.result;
-  }
-}
-
-// 导出单例
 export const toolRegistry = new McpToolRegistry();
 
 export default McpClient;

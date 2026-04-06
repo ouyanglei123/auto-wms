@@ -127,6 +127,8 @@ This is not an agent manifest.
     expect(entry.layer).toBe('tool');
     expect(entry.capabilities).toContain('intent');
     expect(entry.metadata.inputSchema).toBeDefined();
+    expect(entry.metadata.implementation).toBe('declared');
+    expect(entry.tags).toEqual(['mcp']);
   });
 
   it('should filter by kind, layer and query', async () => {

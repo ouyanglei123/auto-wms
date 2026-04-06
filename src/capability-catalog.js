@@ -8,7 +8,7 @@ import path from 'node:path';
 import fs from 'fs-extra';
 import { AgentRegistry } from './router/agent-registry.js';
 import { SkillIndexer } from './skills/skill-indexer.js';
-import { DEFAULT_TOOLS } from './mcp/mcp-server.js';
+import { DEFAULT_TOOLS } from './mcp/mcp-shared.js';
 
 const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)\n---/;
 const COMMAND_HEADING_REGEX = /^#\s+\/([^\s]+).*$/m;
@@ -226,7 +226,8 @@ export class CapabilityCatalog {
       capabilities: Object.keys(tool.inputSchema?.properties || {}),
       source: 'mcp-default',
       metadata: {
-        inputSchema: tool.inputSchema || null
+        inputSchema: tool.inputSchema || null,
+        implementation: this._getMcpToolImplementation(tool)
       }
     }));
   }
@@ -236,6 +237,14 @@ export class CapabilityCatalog {
       acc[entry[field]] = (acc[entry[field]] || 0) + 1;
       return acc;
     }, {});
+  }
+
+  _getMcpToolImplementation(tool) {
+    if (typeof tool.handler === 'function') {
+      return 'implemented';
+    }
+
+    return 'declared';
   }
 
   async _walkMarkdownFiles(baseDir) {
