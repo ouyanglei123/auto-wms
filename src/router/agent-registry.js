@@ -14,7 +14,10 @@ import { COMPLEXITY_LEVELS, AGENT_STATES } from './agent-types.js';
 
 const AGENTS_DIR_NAME = 'agents';
 const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)\n---/;
-const SAFE_AGENT_NAME_REGEX = /^[a-z0-9-]+$/;
+const SAFE_AGENT_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
+const ALLOWED_AGENT_MODELS = new Set(['opus', 'sonnet', 'haiku']);
+const ALLOWED_MANIFEST_KEYS = new Set(['name', 'description', 'tools', 'model', 'tags']);
+const SAFE_TOOL_NAME_REGEX = /^[A-Za-z][A-Za-z0-9-]*$/;
 
 /**
  * 内置 Agent 清单定义
@@ -568,18 +571,18 @@ export class AgentRegistry {
           continue;
         }
 
-        const manifest = await this._parseAgentFile(filePath, name);
+        const manifest = await this._parseAgentFile(agentsDir, filePath, name);
         if (!manifest) {
           continue;
         }
 
         if (this.agents.has(name)) {
-          const existing = this.agents.get(name);
-          existing.filePath = filePath;
+          this.logger.warn(`跳过与现有 Agent 重名的自定义 Agent: ${filePath}`);
           continue;
         }
 
         this.agents.set(name, manifest);
+        this._agentHealth.set(name, { status: 'healthy', lastCheck: Date.now() });
       }
     } catch (error) {
       this.logger.warn(`加载自定义 Agent 失败: ${error.message}`);
@@ -588,18 +591,24 @@ export class AgentRegistry {
 
   /**
    * 解析 Agent .md 文件，提取清单
+   * @param {string} agentsDir
    * @param {string} filePath
    * @param {string} name
    * @returns {Promise<import('./agent-types.js').AgentManifest|null>}
    * @private
    */
-  async _parseAgentFile(filePath, name) {
+  async _parseAgentFile(agentsDir, filePath, name) {
     try {
+      if (!(await this._isAllowedAgentPath(agentsDir, filePath, name))) {
+        this.logger.warn(`跳过越界或非法 Agent 文件: ${filePath}`);
+        return null;
+      }
+
       const content = await fs.readFile(filePath, 'utf-8');
       const frontmatter = this._parseFrontmatter(content);
 
       if (!frontmatter) {
-        this.logger.debug(`跳过未声明清单的 Agent 文件: ${filePath}`);
+        this.logger.debug(`跳过未声明或不合法清单的 Agent 文件: ${filePath}`);
         return null;
       }
 
@@ -609,8 +618,7 @@ export class AgentRegistry {
       }
 
       const title = this._extractHeading(content) || frontmatter.name;
-
-      return {
+      const manifest = {
         name: frontmatter.name,
         displayName: title,
         description: frontmatter.description || title,
@@ -625,10 +633,43 @@ export class AgentRegistry {
         filePath,
         tags: frontmatter.tags
       };
+
+      if (frontmatter.model) {
+        manifest.model = frontmatter.model;
+      }
+
+      return manifest;
     } catch (error) {
       this.logger.warn(`解析 Agent 文件失败 ${filePath}: ${error.message}`);
       return null;
     }
+  }
+
+  async _isAllowedAgentPath(agentsDir, filePath, name) {
+    const normalizedAgentsDir = path.resolve(agentsDir);
+    const normalizedFilePath = path.resolve(filePath);
+
+    if (path.dirname(normalizedFilePath) !== normalizedAgentsDir) {
+      return false;
+    }
+
+    if (path.extname(normalizedFilePath) !== '.md') {
+      return false;
+    }
+
+    if (path.basename(normalizedFilePath, '.md') !== name) {
+      return false;
+    }
+
+    const resolvedRealFilePath = path.resolve(await fs.realpath(normalizedFilePath));
+    if (path.relative(normalizedFilePath, resolvedRealFilePath) !== '') {
+      return false;
+    }
+
+    const relativePath = path.relative(normalizedAgentsDir, resolvedRealFilePath);
+    return (
+      Boolean(relativePath) && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)
+    );
   }
 
   _parseFrontmatter(content) {
@@ -638,17 +679,48 @@ export class AgentRegistry {
     }
 
     const frontmatter = match[1];
+    if (!this._hasAllowedManifestShape(frontmatter)) {
+      return null;
+    }
+
     const name = this._extractFrontmatterScalar(frontmatter, 'name');
     if (!name || !SAFE_AGENT_NAME_REGEX.test(name)) {
+      return null;
+    }
+
+    const tools = this._sanitizeToolList(this._extractFrontmatterList(frontmatter, 'tools'));
+    if (!tools || tools.length === 0) {
+      return null;
+    }
+
+    const model = this._extractFrontmatterScalar(frontmatter, 'model');
+    if (model && !ALLOWED_AGENT_MODELS.has(model)) {
       return null;
     }
 
     return {
       name,
       description: this._extractFrontmatterScalar(frontmatter, 'description'),
-      tools: this._extractFrontmatterList(frontmatter, 'tools'),
-      tags: this._extractFrontmatterList(frontmatter, 'tags')
+      tools,
+      model,
+      tags: this._sanitizeStringList(this._extractFrontmatterList(frontmatter, 'tags'))
     };
+  }
+
+  _hasAllowedManifestShape(frontmatter) {
+    const lines = frontmatter
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      return false;
+    }
+
+    return lines.every((line) => {
+      const key = line.match(/^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/)?.[1];
+      return key ? ALLOWED_MANIFEST_KEYS.has(key) : false;
+    });
   }
 
   _extractFrontmatterScalar(frontmatter, key) {
@@ -660,7 +732,7 @@ export class AgentRegistry {
     if (inline) {
       return inline
         .split(',')
-        .map((item) => item.trim().replace(/['"]/g, ''))
+        .map((item) => item.trim())
         .filter(Boolean);
     }
 
@@ -673,6 +745,15 @@ export class AgentRegistry {
       .split(',')
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  _sanitizeStringList(values) {
+    return [...new Set(values.map((value) => value.replace(/['"]/g, '').trim()).filter(Boolean))];
+  }
+
+  _sanitizeToolList(values) {
+    const tools = this._sanitizeStringList(values);
+    return tools.every((tool) => SAFE_TOOL_NAME_REGEX.test(tool)) ? tools : null;
   }
 
   _extractHeading(content) {

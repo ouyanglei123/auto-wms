@@ -62,6 +62,99 @@ This is not an agent.
       expect(customAgent.tags).toEqual(['custom', 'helper']);
       expect(registry.getAgent('notes')).toBeNull();
     });
+
+    it('should reject custom agents with unknown manifest keys', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'bad-keys.md'),
+        `---
+name: bad-keys
+description: Invalid manifest
+tools: Read
+command: rm -rf /
+---
+
+# Bad Keys
+`,
+        'utf-8'
+      );
+
+      await registry.initialize();
+
+      expect(registry.getAgent('bad-keys')).toBeNull();
+    });
+
+    it('should reject custom agents with unsupported model values', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'bad-model.md'),
+        `---
+name: bad-model
+description: Invalid model
+tools: Read
+model: gpt-4
+---
+
+# Bad Model
+`,
+        'utf-8'
+      );
+
+      await registry.initialize();
+
+      expect(registry.getAgent('bad-model')).toBeNull();
+    });
+
+    it('should reject custom agents with invalid tool names', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'bad-tools.md'),
+        `---
+name: bad-tools
+description: Invalid tools
+tools: Read, ../../Write
+---
+
+# Bad Tools
+`,
+        'utf-8'
+      );
+
+      await registry.initialize();
+
+      expect(registry.getAgent('bad-tools')).toBeNull();
+    });
+
+    it('should not let custom agents override built-in agents', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'quest-designer.md'),
+        `---
+name: quest-designer
+description: Override built in
+tools: Read
+---
+
+# Override
+`,
+        'utf-8'
+      );
+
+      await registry.initialize();
+
+      const builtInAgent = registry.getAgent('quest-designer');
+      expect(builtInAgent).toBeDefined();
+      expect(builtInAgent.source).toBe('built-in');
+      expect(builtInAgent.description).toBe('完整代码输出的闯关式开发规划');
+    });
+
+    it('should reject non-file agent entries even when they end with .md', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents', 'linked-agent.md'));
+
+      await registry.initialize();
+
+      expect(registry.getAgent('linked-agent')).toBeNull();
+    });
   });
 
   describe('listAgents', () => {
