@@ -214,5 +214,27 @@ describe('installer.js coverage boost', () => {
       const removed = await uninstall(['agents']);
       expect(removed).toContain(goodFile);
     });
+
+    it('should ignore recorded files outside managed component roots', async () => {
+      const safeFile = path.join(testClaudeDir, 'agents', 'safe.md');
+      const outsideFile = path.join(testDir, 'outside.md');
+      await fs.ensureDir(path.dirname(safeFile));
+      await fs.writeFile(safeFile, '# SAFE');
+      await fs.writeFile(outsideFile, '# OUTSIDE');
+
+      mockGetInstalledVersion.mockResolvedValue({
+        version: '0.1.0',
+        installedFiles: [outsideFile, safeFile]
+      });
+
+      const versionFile = path.join(testClaudeDir, '.auto-version');
+      await fs.writeJson(versionFile, { version: '0.1.0' });
+
+      const removed = await uninstall(['agents']);
+
+      expect(removed).toContain(safeFile);
+      expect(removed).not.toContain(outsideFile);
+      expect(await fs.pathExists(outsideFile)).toBe(true);
+    });
   });
 });

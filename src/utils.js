@@ -1,7 +1,7 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs-extra';
-import { exec } from 'child_process';
+import * as childProcess from 'child_process';
 import { fileURLToPath } from 'url';
 
 /**
@@ -335,7 +335,11 @@ export function compressContext(messages, options = {}) {
 
   // 计算 TF-IDF
   const documents = messages.map((m) => m.content || '');
-  const allTerms = documents.join(' ').toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
+  const allTerms = documents
+    .join(' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((t) => t.length >= 2);
   const tfIdf = computeTfIdf(allTerms, documents);
 
   // 计算每条消息的分数
@@ -355,8 +359,14 @@ export function compressContext(messages, options = {}) {
 
   // 构建最终保留列表（决策点 + 高分消息 + 最近消息）
   const decisionIndices = new Set(decisionMessages.map((d) => d.index));
-  const recentIndices = new Set(messages.slice(-Math.floor(maxEntries / 2)).map((_, i) => messages.length - Math.floor(maxEntries / 2) + i));
-  const topScoredIndices = new Set(scoredMessages.slice(0, Math.floor(maxEntries / 2)).map((s) => s.index));
+  const recentIndices = new Set(
+    messages
+      .slice(-Math.floor(maxEntries / 2))
+      .map((_, i) => messages.length - Math.floor(maxEntries / 2) + i)
+  );
+  const topScoredIndices = new Set(
+    scoredMessages.slice(0, Math.floor(maxEntries / 2)).map((s) => s.index)
+  );
 
   const keptIndices = new Set([...decisionIndices, ...recentIndices, ...topScoredIndices]);
 
@@ -413,19 +423,36 @@ export function compressContext(messages, options = {}) {
  * @returns {Promise<boolean>} 是否成功打开
  */
 export async function openBrowser(url) {
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return false;
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    return false;
+  }
+
+  const targetUrl = parsedUrl.toString();
   const platform = process.platform;
   let command;
+  let args;
 
   if (platform === 'darwin') {
-    command = `open "${url}"`;
+    command = 'open';
+    args = [targetUrl];
   } else if (platform === 'win32') {
-    command = `start "" "${url}"`;
+    command = 'cmd';
+    args = ['/c', 'start', '', targetUrl];
   } else {
-    command = `xdg-open "${url}"`;
+    command = 'xdg-open';
+    args = [targetUrl];
   }
 
   return new Promise((resolve) => {
-    exec(command, (error) => {
+    childProcess.execFile(command, args, (error) => {
       resolve(!error);
     });
   });

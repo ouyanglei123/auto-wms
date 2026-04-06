@@ -154,6 +154,21 @@ Content in sub directory.
 
       expect(result).toBeNull();
     });
+
+    it('should reject path traversal outside skills directory', async () => {
+      const outsideFile = path.join(tempDir, '..', 'outside-skill.md');
+      await fs.writeFile(outsideFile, '# Outside', 'utf-8');
+
+      const result = await indexer.loadContent('../outside-skill.md');
+
+      expect(result).toBeNull();
+    });
+
+    it('should reject absolute paths', async () => {
+      const result = await indexer.loadContent(path.join(tempDir, 'test-skill.md'));
+
+      expect(result).toBeNull();
+    });
   });
 
   describe('getIndexSummary', () => {
