@@ -6,8 +6,26 @@ import { interactiveMode, runInstall, runUpdate, runUninstall, runRoute } from '
 import { getPackageVersion, COMPONENTS, openBrowser } from '../src/utils.js';
 import { DOCS_URL } from '../src/config.js';
 import { KnowledgeSteward } from '../src/knowledge/knowledge-steward.js';
+import { InstinctManager } from '../src/learning/instinct-manager.js';
+import { learnFromTaskEvent } from '../src/learning/task-event-learning.js';
 
 const program = new Command();
+
+async function readStdin() {
+  if (process.stdin.isTTY) {
+    return '';
+  }
+
+  return await new Promise((resolve, reject) => {
+    let data = '';
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
+    process.stdin.on('end', () => resolve(data));
+    process.stdin.on('error', reject);
+  });
+}
 
 program
   .name('auto')
@@ -204,6 +222,119 @@ save
           console.log('');
         }
       }
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
+save
+  .command('instinct')
+  .description('记录一条可复用的编码模式观察')
+  .requiredOption('-p, --pattern <text>', '模式描述')
+  .requiredOption('-a, --action <text>', '下次应自动应用的动作')
+  .option('-s, --source <text>', '观察来源')
+  .option('-e, --evidence <items>', '证据，逗号分隔')
+  .option('--tags <tags>', '标签，逗号分隔')
+  .action(async (options) => {
+    try {
+      const manager = new InstinctManager();
+      const evidence = options.evidence
+        ? options.evidence
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+      const tags = options.tags
+        ? options.tags
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : undefined;
+
+      const result = await manager.observe({
+        pattern: options.pattern,
+        action: options.action,
+        source: options.source,
+        evidence,
+        tags
+      });
+
+      const label = result.promoted
+        ? '已晋升为 Instinct'
+        : result.kind === 'instinct'
+          ? 'Instinct 已更新'
+          : '已记录为候选模式';
+      console.log(chalk.green(label));
+      console.log(chalk.gray(`  模式: ${result.pattern}`));
+      console.log(chalk.gray(`  置信度: ${result.confidence}`));
+      console.log(chalk.gray(`  观察次数: ${result.observations}`));
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('internal:learn-task-event')
+  .description('内部命令：从 TaskCompleted 事件学习 instinct')
+  .action(async () => {
+    try {
+      const rawInput = await readStdin();
+      if (!rawInput.trim()) {
+        return;
+      }
+
+      const event = JSON.parse(rawInput);
+      const result = await learnFromTaskEvent(event, { projectDir: process.cwd() });
+      if (result.skipped) {
+        console.log(chalk.gray(result.reason));
+        return;
+      }
+
+      console.log(chalk.green(`Learned instinct candidate: ${result.result.pattern}`));
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('instinct-status')
+  .description('查看已学习的 Instinct 与候选模式')
+  .action(async () => {
+    try {
+      const manager = new InstinctManager();
+      const status = await manager.getStatus();
+
+      console.log('');
+      console.log(chalk.cyan.bold(`已学习 Instincts (${status.counts.instincts} 条)`));
+      if (status.instincts.length === 0) {
+        console.log(chalk.gray('  暂无已确认 instinct'));
+      } else {
+        for (const instinct of status.instincts) {
+          console.log(
+            chalk.gray(
+              `  - ${instinct.pattern} | 置信度 ${instinct.confidence} | 观察 ${instinct.observations} 次`
+            )
+          );
+        }
+      }
+
+      console.log('');
+      console.log(chalk.cyan.bold(`候选模式 (${status.counts.candidates} 条)`));
+      if (status.candidates.length === 0) {
+        console.log(chalk.gray('  暂无候选模式'));
+      } else {
+        for (const candidate of status.candidates) {
+          console.log(
+            chalk.gray(
+              `  - ${candidate.pattern} | 置信度 ${candidate.confidence} | 观察 ${candidate.observations} 次`
+            )
+          );
+        }
+      }
+      console.log('');
     } catch (error) {
       console.error(chalk.red('错误：'), error.message);
       process.exit(1);
