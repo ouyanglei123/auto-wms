@@ -9,8 +9,15 @@ import fs from 'fs-extra';
 import { AgentRegistry } from './router/agent-registry.js';
 import { SkillIndexer } from './skills/skill-indexer.js';
 import { DEFAULT_TOOLS } from './mcp/mcp-shared.js';
+import {
+  extractFrontmatterBlock,
+  extractFrontmatterList,
+  extractFrontmatterScalar,
+  extractHeading,
+  normalizeRelativePath,
+  sanitizeStringList
+} from './metadata-utils.js';
 
-const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)\n---/;
 const COMMAND_HEADING_REGEX = /^#\s+\/([^\s]+).*$/m;
 
 /**
@@ -142,11 +149,11 @@ export class CapabilityCatalog {
 
     for (const filePath of files) {
       const content = await fs.readFile(filePath, 'utf-8');
-      const relativePath = path.relative(this.projectDir, filePath).replace(/\\/g, '/');
+      const relativePath = normalizeRelativePath(this.projectDir, filePath);
       const frontmatter = this._parseFrontmatter(content);
       const headingName = content.match(COMMAND_HEADING_REGEX)?.[1]?.trim();
       const name = frontmatter.name || headingName || this._deriveCommandName(filePath);
-      const title = this._extractHeading(content);
+      const title = extractHeading(content);
 
       entries.push({
         id: `command:${name}`,
@@ -265,16 +272,8 @@ export class CapabilityCatalog {
     return results;
   }
 
-  _extractHeading(content) {
-    return content
-      .split('\n')
-      .find((line) => line.trim().startsWith('#'))
-      ?.replace(/^#+\s*/, '')
-      .trim();
-  }
-
   _deriveCommandName(filePath) {
-    const relativePath = path.relative(this.commandsDir, filePath).replace(/\\/g, '/');
+    const relativePath = normalizeRelativePath(this.commandsDir, filePath);
     const withoutExt = relativePath.replace(/\.md$/i, '');
 
     if (withoutExt.includes('/')) {
@@ -286,34 +285,17 @@ export class CapabilityCatalog {
   }
 
   _parseFrontmatter(content) {
-    const match = content.match(FRONTMATTER_REGEX);
-    if (!match?.[1]) {
+    const frontmatter = extractFrontmatterBlock(content);
+    if (!frontmatter) {
       return { name: '', description: '', tags: [], allowed_tools: [] };
     }
 
-    const frontmatter = match[1];
     return {
-      name: this._extractScalar(frontmatter, 'name'),
-      description: this._extractScalar(frontmatter, 'description'),
-      tags: this._extractArray(frontmatter, 'tags'),
-      allowed_tools: this._extractArray(frontmatter, 'allowed_tools')
+      name: extractFrontmatterScalar(frontmatter, 'name'),
+      description: extractFrontmatterScalar(frontmatter, 'description'),
+      tags: sanitizeStringList(extractFrontmatterList(frontmatter, 'tags')),
+      allowed_tools: sanitizeStringList(extractFrontmatterList(frontmatter, 'allowed_tools'))
     };
-  }
-
-  _extractScalar(frontmatter, key) {
-    return frontmatter.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() || '';
-  }
-
-  _extractArray(frontmatter, key) {
-    const raw = frontmatter.match(new RegExp(`^${key}:\\s*\\[(.+)\\]$`, 'm'))?.[1];
-    if (!raw) {
-      return [];
-    }
-
-    return raw
-      .split(',')
-      .map((item) => item.trim().replace(/['"]/g, ''))
-      .filter(Boolean);
   }
 }
 

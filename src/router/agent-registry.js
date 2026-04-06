@@ -11,9 +11,15 @@ import path from 'node:path';
 import fs from 'fs-extra';
 import { logger } from '../logger.js';
 import { COMPLEXITY_LEVELS, AGENT_STATES } from './agent-types.js';
+import {
+  extractFrontmatterBlock,
+  extractFrontmatterList,
+  extractFrontmatterScalar,
+  extractHeading,
+  sanitizeStringList
+} from '../metadata-utils.js';
 
 const AGENTS_DIR_NAME = 'agents';
-const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)\n---/;
 const SAFE_AGENT_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 const ALLOWED_AGENT_MODELS = new Set(['opus', 'sonnet', 'haiku']);
 const ALLOWED_MANIFEST_KEYS = new Set(['name', 'description', 'tools', 'model', 'tags']);
@@ -673,37 +679,36 @@ export class AgentRegistry {
   }
 
   _parseFrontmatter(content) {
-    const match = content.match(FRONTMATTER_REGEX);
-    if (!match?.[1]) {
+    const frontmatter = extractFrontmatterBlock(content);
+    if (!frontmatter) {
       return null;
     }
 
-    const frontmatter = match[1];
     if (!this._hasAllowedManifestShape(frontmatter)) {
       return null;
     }
 
-    const name = this._extractFrontmatterScalar(frontmatter, 'name');
+    const name = extractFrontmatterScalar(frontmatter, 'name');
     if (!name || !SAFE_AGENT_NAME_REGEX.test(name)) {
       return null;
     }
 
-    const tools = this._sanitizeToolList(this._extractFrontmatterList(frontmatter, 'tools'));
+    const tools = this._sanitizeToolList(extractFrontmatterList(frontmatter, 'tools'));
     if (!tools || tools.length === 0) {
       return null;
     }
 
-    const model = this._extractFrontmatterScalar(frontmatter, 'model');
+    const model = extractFrontmatterScalar(frontmatter, 'model');
     if (model && !ALLOWED_AGENT_MODELS.has(model)) {
       return null;
     }
 
     return {
       name,
-      description: this._extractFrontmatterScalar(frontmatter, 'description'),
+      description: extractFrontmatterScalar(frontmatter, 'description'),
       tools,
       model,
-      tags: this._sanitizeStringList(this._extractFrontmatterList(frontmatter, 'tags'))
+      tags: sanitizeStringList(extractFrontmatterList(frontmatter, 'tags'))
     };
   }
 
@@ -723,45 +728,13 @@ export class AgentRegistry {
     });
   }
 
-  _extractFrontmatterScalar(frontmatter, key) {
-    return frontmatter.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim() || '';
-  }
-
-  _extractFrontmatterList(frontmatter, key) {
-    const inline = frontmatter.match(new RegExp(`^${key}:\\s*\\[(.+)\\]$`, 'm'))?.[1];
-    if (inline) {
-      return inline
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-    }
-
-    const scalar = this._extractFrontmatterScalar(frontmatter, key);
-    if (!scalar) {
-      return [];
-    }
-
-    return scalar
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  _sanitizeStringList(values) {
-    return [...new Set(values.map((value) => value.replace(/['"]/g, '').trim()).filter(Boolean))];
-  }
-
   _sanitizeToolList(values) {
-    const tools = this._sanitizeStringList(values);
+    const tools = sanitizeStringList(values);
     return tools.every((tool) => SAFE_TOOL_NAME_REGEX.test(tool)) ? tools : null;
   }
 
   _extractHeading(content) {
-    return content
-      .split('\n')
-      .find((line) => line.trim().startsWith('#'))
-      ?.replace(/^#+\s*/, '')
-      .trim();
+    return extractHeading(content);
   }
 }
 

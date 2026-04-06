@@ -18,6 +18,14 @@ import fs from 'fs-extra';
 import { createHash } from 'node:crypto';
 import { execSync } from 'child_process';
 import { logger } from '../logger.js';
+import {
+  extractFrontmatterBlock,
+  extractFrontmatterList,
+  extractFrontmatterScalar,
+  extractHeading,
+  normalizeRelativePath,
+  sanitizeStringList
+} from '../metadata-utils.js';
 
 /**
  * Skill 索引条目
@@ -58,11 +66,6 @@ import { logger } from '../logger.js';
  * @property {number} created_at - 缓存创建时间戳
  * @property {FileHashEntry[]} files - 文件 hash 列表
  */
-
-/**
- * Frontmatter 提取正则
- */
-const FRONTMATTER_REGEX = /^---\s*\n([\s\S]*?)\n---/;
 
 /**
  * Skill 文件匹配模式
@@ -257,7 +260,7 @@ export class SkillIndexer {
         const stat = await fs.stat(fullPath);
 
         if (stat.isFile() && SKILL_FILE_PATTERNS.some((p) => entry.endsWith(p))) {
-          const relativePath = path.relative(this.skillsDir, fullPath).replace(/\\/g, '/');
+          const relativePath = normalizeRelativePath(this.skillsDir, fullPath);
           currentFiles.add(relativePath);
           const cachedMtime = cachedFiles.get(relativePath);
           if (cachedMtime !== stat.mtimeMs) {
@@ -302,7 +305,7 @@ export class SkillIndexer {
    */
   async loadContent(relativePath) {
     const filePath = path.resolve(this.skillsDir, relativePath);
-    const normalizedRelativePath = path.relative(this.skillsDir, filePath).replace(/\\/g, '/');
+    const normalizedRelativePath = normalizeRelativePath(this.skillsDir, filePath);
 
     if (
       normalizedRelativePath.startsWith('..') ||
@@ -364,48 +367,20 @@ export class SkillIndexer {
       const content = await fs.readFile(filePath, 'utf-8');
       const stat = await fs.stat(filePath);
 
-      // 提取 frontmatter
-      const match = content.match(FRONTMATTER_REGEX);
       let name = path.basename(relativePath, '.md');
-      let description = '';
-      let tags = [];
+      const frontmatter = extractFrontmatterBlock(content);
+      const description = extractFrontmatterScalar(frontmatter, 'description');
+      const tags = sanitizeStringList(extractFrontmatterList(frontmatter, 'tags'));
 
-      if (match && match[1]) {
-        const frontmatter = match[1];
-        // 解析 name
-        const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
-        if (nameMatch) {
-          name = nameMatch[1].trim();
-        }
-        // 解析 description
-        const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
-        if (descMatch) {
-          description = descMatch[1].trim();
-        }
-        // 解析 tags
-        const tagsMatch = frontmatter.match(/^tags:\s*\[(.+)\]/m);
-        if (tagsMatch) {
-          tags = tagsMatch[1]
-            .split(',')
-            .map((t) => t.trim().replace(/['"]/g, ''))
-            .filter(Boolean);
-        }
+      if (frontmatter) {
+        name = extractFrontmatterScalar(frontmatter, 'name') || name;
       }
 
-      // 如果没有 frontmatter，从内容第一行提取标题
-      if (!description) {
-        const firstLine = content.split('\n').find((line) => line.trim().startsWith('#'));
-        if (firstLine) {
-          description = firstLine
-            .replace(/^#+\s*/, '')
-            .trim()
-            .slice(0, 100);
-        }
-      }
+      const resolvedDescription = (description || extractHeading(content) || '').slice(0, 100);
 
       return {
         name,
-        description,
+        description: resolvedDescription,
         tags,
         filePath,
         relativePath,

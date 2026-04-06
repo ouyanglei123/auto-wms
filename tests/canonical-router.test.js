@@ -376,6 +376,7 @@ describe('CanonicalRouter', () => {
       expect(result.agent).toBeDefined();
       expect(result.score).toBeGreaterThan(0);
       expect(result.isDefault).toBe(false);
+      expect(result.routeId).toBeDefined();
     });
 
     it('should route to security-reviewer for security intent', async () => {
@@ -416,6 +417,7 @@ describe('CanonicalRouter', () => {
       const result = await router.route('');
 
       expect(result.isDefault).toBe(true);
+      expect(result.routeId).toBeDefined();
     });
 
     it('should return default for whitespace intent', async () => {
@@ -451,6 +453,58 @@ describe('CanonicalRouter', () => {
       });
 
       expect(result.agent.name).toBe('security-reviewer');
+    });
+
+    it('should enrich route result with wms match reason when intent is wms-related', async () => {
+      const result = await router.route('重构出库波次分配流程');
+
+      expect(result.matchReason).toContain('WMS服务: outbound');
+      expect(result.matchReason).toContain('业务域: 波次');
+    });
+  });
+
+  describe('history and feedback', () => {
+    it('should record proposals without updating hit stats immediately', async () => {
+      const result = await router.route('编写测试用例');
+
+      const history = router.getHistory();
+      const stats = router.getAgentStats();
+
+      expect(history).toHaveLength(1);
+      expect(history[0].routeId).toBe(result.routeId);
+      expect(history[0].outcome).toBe('proposed');
+      expect(stats.has(result.agent.name)).toBe(false);
+    });
+
+    it('should update stats and route outcome on success feedback', async () => {
+      const result = await router.route('编写测试用例');
+      router.reportSuccess(result.routeId);
+
+      const stats = router.getAgentStats().get(result.agent.name);
+      const history = router.getHistory();
+
+      expect(stats).toEqual({ hits: 1, total: 1, hitRate: 1 });
+      expect(history[0].outcome).toBe('success');
+    });
+
+    it('should update stats and route outcome on failure feedback', async () => {
+      const result = await router.route('编写测试用例');
+      router.reportFailure(result.routeId);
+
+      const stats = router.getAgentStats().get(result.agent.name);
+      const history = router.getHistory();
+
+      expect(stats).toEqual({ hits: 0, total: 1, hitRate: 0 });
+      expect(history[0].outcome).toBe('failure');
+    });
+
+    it('should prefer scope-matched agent when feedback improved its hit rate', () => {
+      router.reportSuccess('code-reviewer');
+      const intent = { wms: { isWmsRelated: false }, complexity: COMPLEXITY_LEVELS.LOW };
+      const context = { scope: 'pre-commit' };
+
+      expect(router._computeContextSimilarity('code-reviewer', intent, context)).toBe(1.5);
+      expect(router._computeContextSimilarity('architect', intent, context)).toBe(0.5);
     });
   });
 
@@ -495,6 +549,14 @@ describe('CanonicalRouter', () => {
 
       expect(intent.keywords).toContain('.tsx');
       expect(intent.keywords).toContain('.css');
+    });
+
+    it('should enrich intent with wms signals', () => {
+      const intent = router._analyzeIntent('修复库存冻结流程', {});
+
+      expect(intent.wms.isWmsRelated).toBe(true);
+      expect(intent.wms.targetService).toBe('storage');
+      expect(intent.keywords).toContain('storage');
     });
   });
 

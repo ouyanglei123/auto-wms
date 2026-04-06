@@ -110,7 +110,7 @@ export class McpServer {
    */
   _handleListTools() {
     return {
-      tools: this.registry.list().map(({ handler, ...tool }) => tool)
+      tools: this.registry.list().map(({ handler: _handler, ...tool }) => tool)
     };
   }
 
