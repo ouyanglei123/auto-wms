@@ -100,27 +100,119 @@ describe('InstinctManager', () => {
     expect(doc.instincts[0].confidence).toBe(0.6);
   });
 
-  it('derives observations from legacy confidence values', async () => {
-    const candidatesPath = path.join(tempDir, '.aimax', 'instincts', 'candidates.yaml');
-    await manager.ensureStructure();
-    await fs.writeFile(
-      candidatesPath,
-      `version: 2\ncandidates:\n  - id: cand-legacy\n    pattern: "Guard dangerous defaults"\n    confidence: 0.6\n    source: "Legacy candidate"\n    action: "Require explicit opt-in for risky automation"\n    evidence:\n      - "src/feature.js"\n    tags:\n      - "security"\n    created_at: "2026-04-06"\n    updated_at: "2026-04-06"\n`,
-      'utf-8'
-    );
-
-    const result = await manager.observe({
+  it('exports instincts and candidates to a shareable yaml file', async () => {
+    await manager.observe({
+      pattern: 'Use Result<T> in controllers',
+      action: 'Wrap controller responses with Result<T>',
+      evidence: ['UserController.getById']
+    });
+    await manager.observe({
+      pattern: 'Guard dangerous defaults',
+      action: 'Require explicit opt-in for risky automation',
+      evidence: ['src/feature.js']
+    });
+    await manager.observe({
       pattern: 'Guard dangerous defaults',
       action: 'Require explicit opt-in for risky automation',
       evidence: ['src/another-feature.js']
     });
+    await manager.observe({
+      pattern: 'Guard dangerous defaults',
+      action: 'Require explicit opt-in for risky automation',
+      evidence: ['src/final-feature.js']
+    });
 
-    expect(result.kind).toBe('instinct');
-    expect(result.promoted).toBe(true);
-    expect(result.observations).toBe(4);
+    const exportPath = path.join(tempDir, 'shared', 'team-instincts.yaml');
+    const result = await manager.exportTo(exportPath);
+    const doc = parse(await fs.readFile(exportPath, 'utf-8'));
+
+    expect(result.filePath).toBe(exportPath);
+    expect(result.counts.instincts).toBe(1);
+    expect(result.counts.candidates).toBe(1);
+    expect(doc.instincts).toHaveLength(1);
+    expect(doc.candidates).toHaveLength(1);
+  });
+
+  it('imports instincts and candidates without duplicating repeated imports', async () => {
+    const importPath = path.join(tempDir, 'imports', 'team-instincts.yaml');
+    await fs.ensureDir(path.dirname(importPath));
+    await fs.writeFile(
+      importPath,
+      `version: 2\ninstincts:\n  - id: inst-imported\n    pattern: "Use Vitest for JS tests"\n    confidence: 0.8\n    action: "Prefer Vitest in test setup"\n    source: "Imported"\n    evidence:\n      - "tests/a.test.js"\n    tags:\n      - "testing"\n    observations: 6\n    created_at: "2026-04-06"\n    updated_at: "2026-04-06"\ncandidates:\n  - id: cand-imported\n    pattern: "Guard dangerous defaults"\n    confidence: 0.3\n    action: "Require explicit opt-in for risky automation"\n    source: "Imported"\n    evidence:\n      - "src/feature.js"\n    tags:\n      - "security"\n    observations: 1\n    created_at: "2026-04-06"\n    updated_at: "2026-04-06"\n`,
+      'utf-8'
+    );
+
+    await manager.observe({
+      pattern: 'Use Vitest for JS tests',
+      action: 'Prefer Vitest in test setup',
+      evidence: ['tests/b.test.js'],
+      tags: ['js']
+    });
+
+    await manager.importFrom(importPath);
+    await manager.importFrom(importPath);
 
     const status = await manager.getStatus();
-    expect(status.counts.candidates).toBe(0);
     expect(status.counts.instincts).toBe(1);
+    expect(status.counts.candidates).toBe(1);
+    expect(status.instincts[0].observations).toBe(6);
+    expect(status.instincts[0].evidence).toEqual(['tests/b.test.js', 'tests/a.test.js']);
+    expect(status.instincts[0].tags).toEqual(['js', 'testing']);
+    expect(status.candidates[0].pattern).toBe('Guard dangerous defaults');
+    expect(status.candidates[0].evidence).toEqual(['src/feature.js']);
+  });
+
+  it('evolves related instincts into higher-level skill proposals', async () => {
+    const testingInstincts = [
+      {
+        pattern: 'Use Vitest for JS tests',
+        action: 'Prefer Vitest in test setup',
+        tags: ['testing', 'js'],
+        evidence: ['tests/a.test.js']
+      },
+      {
+        pattern: 'Keep JS tests isolated with temp directories',
+        action: 'Use temp directories for file-system tests',
+        tags: ['testing', 'js'],
+        evidence: ['tests/fs.test.js']
+      }
+    ];
+
+    for (const instinct of testingInstincts) {
+      await manager.observe(instinct);
+      await manager.observe({ ...instinct, evidence: [`${instinct.evidence[0]}:2`] });
+      await manager.observe({ ...instinct, evidence: [`${instinct.evidence[0]}:3`] });
+    }
+
+    await manager.observe({
+      pattern: 'Use Result<T> in controllers',
+      action: 'Wrap controller responses with Result<T>',
+      tags: ['java'],
+      evidence: ['UserController.getById']
+    });
+    await manager.observe({
+      pattern: 'Use Result<T> in controllers',
+      action: 'Wrap controller responses with Result<T>',
+      tags: ['java'],
+      evidence: ['UserController.getById:2']
+    });
+    await manager.observe({
+      pattern: 'Use Result<T> in controllers',
+      action: 'Wrap controller responses with Result<T>',
+      tags: ['java'],
+      evidence: ['UserController.getById:3']
+    });
+
+    const evolvePath = path.join(tempDir, 'shared', 'evolved-skills.yaml');
+    const result = await manager.evolveTo(evolvePath);
+    const doc = parse(await fs.readFile(evolvePath, 'utf-8'));
+
+    expect(result.filePath).toBe(evolvePath);
+    expect(result.count).toBe(2);
+    expect(doc.skills).toHaveLength(2);
+    expect(doc.skills.find((skill) => skill.name === 'testing practices').patterns).toEqual([
+      'Use Vitest for JS tests',
+      'Keep JS tests isolated with temp directories'
+    ]);
   });
 });

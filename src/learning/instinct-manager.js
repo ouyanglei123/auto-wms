@@ -50,6 +50,24 @@ function sortByUpdatedAt(items) {
   );
 }
 
+function roundConfidence(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function pickLatestDate(...values) {
+  return (
+    values
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .sort()
+      .at(-1) || ''
+  );
+}
+
+function isReusableEntry(entry) {
+  return Boolean(String(entry?.pattern || '').trim() && String(entry?.action || '').trim());
+}
+
 class InstinctManager {
   constructor(projectDir, options = {}) {
     this.projectDir = projectDir || process.cwd();
@@ -201,6 +219,166 @@ class InstinctManager {
     };
   }
 
+  async exportTo(filePath) {
+    await this.ensureStructure();
+    const outputPath = filePath
+      ? path.resolve(this.projectDir, filePath)
+      : path.join(this.instinctsDir, 'exports', 'team-instincts.yaml');
+    await fs.ensureDir(path.dirname(outputPath));
+
+    const status = await this.getStatus();
+    await this._writeYaml(outputPath, {
+      version: FILE_VERSION,
+      exported_at: new Date().toISOString(),
+      instincts: status.instincts,
+      candidates: status.candidates
+    });
+
+    return {
+      filePath: outputPath,
+      counts: {
+        instincts: status.counts.instincts,
+        candidates: status.counts.candidates
+      }
+    };
+  }
+
+  async importFrom(filePath) {
+    if (!filePath || !String(filePath).trim()) {
+      throw new Error('filePath is required');
+    }
+
+    await this.ensureStructure();
+    const inputPath = path.resolve(this.projectDir, filePath);
+    const content = await fs.readFile(inputPath, 'utf-8');
+    const data = parse(content) || {};
+    const importedInstincts = Array.isArray(data.instincts) ? data.instincts : [];
+    const importedCandidates = Array.isArray(data.candidates) ? data.candidates : [];
+    const now = new Date().toISOString().slice(0, 10);
+
+    const instinctsDoc = await this._readYaml(this.instinctsPath, 'instincts');
+    const candidatesDoc = await this._readYaml(this.candidatesPath, 'candidates');
+    const instincts = instinctsDoc.instincts;
+    const candidates = candidatesDoc.candidates;
+
+    for (const incoming of importedInstincts.filter(isReusableEntry)) {
+      const instinctIndex = instincts.findIndex((entry) => entry.pattern === incoming.pattern);
+      if (instinctIndex >= 0) {
+        const updated = this._mergeImportedEntry(instincts[instinctIndex], incoming, now);
+        instincts[instinctIndex] = this._buildInstinct(updated, updated.created_at || now);
+        continue;
+      }
+
+      const candidateIndex = candidates.findIndex((entry) => entry.pattern === incoming.pattern);
+      if (candidateIndex >= 0) {
+        const updated = this._mergeImportedEntry(candidates[candidateIndex], incoming, now);
+        candidates.splice(candidateIndex, 1);
+        instincts.push(this._buildInstinct(updated, updated.created_at || now));
+        continue;
+      }
+
+      const created = this._mergeImportedEntry({}, incoming, now);
+      instincts.push(this._buildInstinct(created, created.created_at || now));
+    }
+
+    for (const incoming of importedCandidates.filter(isReusableEntry)) {
+      const instinctIndex = instincts.findIndex((entry) => entry.pattern === incoming.pattern);
+      if (instinctIndex >= 0) {
+        const updated = this._mergeImportedEntry(instincts[instinctIndex], incoming, now);
+        instincts[instinctIndex] = this._buildInstinct(updated, updated.created_at || now);
+        continue;
+      }
+
+      const candidateIndex = candidates.findIndex((entry) => entry.pattern === incoming.pattern);
+      if (candidateIndex >= 0) {
+        const updated = this._mergeImportedEntry(candidates[candidateIndex], incoming, now);
+        candidates[candidateIndex] = this._buildCandidate(updated, updated.created_at || now);
+        continue;
+      }
+
+      const created = this._mergeImportedEntry({}, incoming, now);
+      candidates.push(this._buildCandidate(created, created.created_at || now));
+    }
+
+    await Promise.all([
+      this._writeYaml(this.instinctsPath, instinctsDoc),
+      this._writeYaml(this.candidatesPath, candidatesDoc)
+    ]);
+
+    return {
+      filePath: inputPath,
+      counts: {
+        instincts: importedInstincts.filter(isReusableEntry).length,
+        candidates: importedCandidates.filter(isReusableEntry).length
+      }
+    };
+  }
+
+  async evolveTo(filePath) {
+    await this.ensureStructure();
+    const outputPath = filePath
+      ? path.resolve(this.projectDir, filePath)
+      : path.join(this.instinctsDir, 'exports', 'evolved-skills.yaml');
+    await fs.ensureDir(path.dirname(outputPath));
+
+    const status = await this.getStatus();
+    const groups = new Map();
+
+    for (const instinct of status.instincts) {
+      for (const tag of instinct.tags || []) {
+        if (!groups.has(tag)) {
+          groups.set(tag, []);
+        }
+        groups.get(tag).push(instinct);
+      }
+    }
+
+    const skills = [...groups.entries()]
+      .filter(([, instincts]) => instincts.length >= 2)
+      .map(([tag, instincts]) => {
+        const observations = instincts.reduce((sum, instinct) => sum + instinct.observations, 0);
+        const confidence = roundConfidence(
+          instincts.reduce((sum, instinct) => sum + instinct.confidence, 0) / instincts.length
+        );
+        const supportingTags = normalizeList(instincts.flatMap((instinct) => instinct.tags || []));
+
+        return {
+          id: buildId('skill', `${tag}-practices`),
+          name: `${tag} practices`,
+          description: `Reusable instincts clustered around ${tag}`,
+          source: 'instinct-evolve',
+          confidence,
+          observations,
+          tags: supportingTags,
+          patterns: instincts.map((instinct) => instinct.pattern),
+          actions: instincts.map((instinct) => instinct.action),
+          evidence: normalizeList(instincts.flatMap((instinct) => instinct.evidence || [])),
+          members: instincts.map((instinct) => ({
+            id: instinct.id,
+            pattern: instinct.pattern,
+            confidence: instinct.confidence,
+            observations: instinct.observations
+          }))
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.observations - left.observations || left.name.localeCompare(right.name)
+      );
+
+    await this._writeYaml(outputPath, {
+      version: FILE_VERSION,
+      evolved_at: new Date().toISOString(),
+      skills
+    });
+
+    return {
+      filePath: outputPath,
+      count: skills.length,
+      skills
+    };
+  }
+
   async _ensureFile(filePath, initialValue) {
     if (!(await fs.pathExists(filePath))) {
       await fs.writeFile(filePath, stringify(initialValue), 'utf-8');
@@ -230,6 +408,22 @@ class InstinctManager {
       observations: estimateObservations(entry) + increment,
       created_at: entry.created_at || updatedAt,
       updated_at: updatedAt
+    };
+  }
+
+  _mergeImportedEntry(entry, incoming, updatedAt) {
+    return {
+      ...entry,
+      ...incoming,
+      id: entry.id || incoming.id,
+      pattern: String(incoming.pattern || entry.pattern || '').trim(),
+      action: String(incoming.action || entry.action || '').trim(),
+      source: String(incoming.source || entry.source || '').trim() || `Imported on ${updatedAt}`,
+      evidence: normalizeList([...(entry.evidence || []), ...(incoming.evidence || [])]),
+      tags: normalizeList([...(entry.tags || []), ...(incoming.tags || [])]),
+      observations: Math.max(estimateObservations(entry), estimateObservations(incoming)),
+      created_at: entry.created_at || incoming.created_at || updatedAt,
+      updated_at: pickLatestDate(entry.updated_at, incoming.updated_at, updatedAt)
     };
   }
 

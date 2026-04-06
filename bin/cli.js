@@ -341,6 +341,58 @@ program
     }
   });
 
+program
+  .command('instinct-export')
+  .description('导出已学习的 Instinct 与候选模式')
+  .option('-o, --output <path>', '导出文件路径')
+  .action(async (options) => {
+    try {
+      const manager = new InstinctManager();
+      const result = await manager.exportTo(options.output);
+      console.log(chalk.green('Instinct 已导出'));
+      console.log(chalk.gray(`  文件: ${result.filePath}`));
+      console.log(chalk.gray(`  Instincts: ${result.counts.instincts}`));
+      console.log(chalk.gray(`  Candidates: ${result.counts.candidates}`));
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('instinct-import <file>')
+  .description('导入已学习的 Instinct 与候选模式')
+  .action(async (file) => {
+    try {
+      const manager = new InstinctManager();
+      const result = await manager.importFrom(file);
+      console.log(chalk.green('Instinct 已导入'));
+      console.log(chalk.gray(`  文件: ${result.filePath}`));
+      console.log(chalk.gray(`  导入 instincts: ${result.counts.instincts}`));
+      console.log(chalk.gray(`  导入 candidates: ${result.counts.candidates}`));
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('instinct-evolve')
+  .description('聚合相关 Instinct 为更高阶技能候选')
+  .option('-o, --output <path>', '导出文件路径')
+  .action(async (options) => {
+    try {
+      const manager = new InstinctManager();
+      const result = await manager.evolveTo(options.output);
+      console.log(chalk.green('Instinct 已进化'));
+      console.log(chalk.gray(`  文件: ${result.filePath}`));
+      console.log(chalk.gray(`  技能候选: ${result.count}`));
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
 // 路由命令
 program
   .command('route <intent>')
