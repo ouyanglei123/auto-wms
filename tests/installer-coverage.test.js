@@ -55,8 +55,8 @@ describe('installer.js coverage boost', () => {
     await fs.ensureDir(testSourceDir);
 
     // Setup source files for all components
-    await fs.ensureDir(path.join(testSourceDir, 'commands'));
-    await fs.writeFile(path.join(testSourceDir, 'commands', 'test.md'), '# CMD');
+    await fs.ensureDir(path.join(testSourceDir, 'commands', 'wms'));
+    await fs.writeFile(path.join(testSourceDir, 'commands', 'wms', 'test.md'), '# CMD');
     await fs.ensureDir(path.join(testSourceDir, 'agents'));
     await fs.writeFile(path.join(testSourceDir, 'agents', 'agent.md'), '# AGENT');
     await fs.ensureDir(path.join(testSourceDir, 'rules'));
@@ -121,8 +121,8 @@ describe('installer.js coverage boost', () => {
   });
 
   describe('uninstall - compatibility mode (no installedFiles)', () => {
-    it('should delete commands/auto directory entirely in compat mode', async () => {
-      const cmdFile = path.join(testClaudeDir, 'commands', 'auto', 'test.md');
+    it('should delete commands/wms directory entirely in compat mode', async () => {
+      const cmdFile = path.join(testClaudeDir, 'commands', 'wms', 'test.md');
       await fs.ensureDir(path.dirname(cmdFile));
       await fs.writeFile(cmdFile, '# CMD');
 
@@ -137,8 +137,8 @@ describe('installer.js coverage boost', () => {
 
       const removed = await uninstall(['commands']);
 
-      // commands/auto dir was removed
-      expect(await fs.pathExists(path.join(testClaudeDir, 'commands', 'auto'))).toBe(false);
+      // commands/wms dir was removed
+      expect(await fs.pathExists(path.join(testClaudeDir, 'commands', 'wms'))).toBe(false);
       expect(removed.length).toBeGreaterThan(0);
 
       // Version file removed
@@ -182,7 +182,7 @@ describe('installer.js coverage boost', () => {
   describe('install - edge cases', () => {
     it('should skip non-matching file extensions', async () => {
       // Add a non-.md file in commands source
-      await fs.writeFile(path.join(testSourceDir, 'commands', 'ignore.txt'), 'text');
+      await fs.writeFile(path.join(testSourceDir, 'commands', 'wms', 'ignore.txt'), 'text');
 
       const result = await install(['commands'], { backup: false });
 

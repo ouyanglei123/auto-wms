@@ -100,11 +100,18 @@ const SECURITY_KEYWORDS = [
 export class CanonicalRouter {
   /**
    * @param {AgentRegistry} [registry] - Agent 注册表
+   * @param {Object} [options] - 配置选项
+   * @param {boolean} [options.enableHistory] - 启用路由历史（默认 true）
+   * @param {number} [options.historySize] - 历史记录大小（默认 100）
    */
-  constructor(registry) {
+  constructor(registry, options = {}) {
     this.registry = registry || new AgentRegistry();
     this.logger = logger;
     this._initialized = false;
+    this._enableHistory = options.enableHistory ?? true;
+    this._historySize = options.historySize ?? 100;
+    this._routeHistory = []; // 路由历史
+    this._agentStats = new Map(); // Agent 命中率统计
   }
 
   /**
@@ -158,13 +165,16 @@ export class CanonicalRouter {
       return this._defaultRoute('上下文过滤后无匹配');
     }
 
-    // 4. 安全优先提升
-    const ranked = this._applySecurityPriority(filtered, intent);
+    // 4. 应用自适应权重（基于历史命中率）
+    const weighted = this._applyAdaptiveWeighting(filtered, intent, context);
 
-    // 5. 选择最优候选
+    // 5. 安全优先提升
+    const ranked = this._applySecurityPriority(weighted, intent);
+
+    // 6. 选择最优候选
     const selected = ranked[0];
 
-    // 6. 构建路由结果
+    // 7. 构建路由结果
     const result = {
       agent: selected.agent,
       score: selected.score,
@@ -173,11 +183,159 @@ export class CanonicalRouter {
       isDefault: false
     };
 
+    // 8. 记录路由历史
+    if (this._enableHistory) {
+      this._recordHistory(userIntent, result);
+    }
+
     this.logger.info(
       `路由结果: agent=${result.agent.name} score=${result.score} reason=${result.matchReason}`
     );
 
     return result;
+  }
+
+  /**
+   * 应用自适应权重（基于历史命中率）
+   * @param {Array} candidates - 候选列表
+   * @param {Object} intent - 意图分析结果
+   * @param {Object} context - 上下文
+   * @returns {Array}
+   * @private
+   */
+  _applyAdaptiveWeighting(candidates, intent, context) {
+    if (!this._enableHistory) return candidates;
+
+    // 上下文相似度权重
+    const contextWeight = this._computeContextSimilarity(intent, context);
+
+    return candidates.map((c) => {
+      const stats = this._agentStats.get(c.agent.name);
+      const hitRate = stats?.hitRate || 0.5; // 默认 50% 命中率
+      const contextualBoost = contextWeight * hitRate * 10;
+
+      return {
+        ...c,
+        score: c.score + contextualBoost
+      };
+    }).sort((a, b) => b.score - a.score);
+  }
+
+  /**
+   * 计算上下文相似度
+   * @param {Object} intent - 意图
+   * @param {Object} context - 上下文
+   * @returns {number}
+   * @private
+   */
+  _computeContextSimilarity(intent, context) {
+    if (!context.scope) return 0.5;
+
+    // 不同 scope 对不同 Agent 有不同偏好
+    const scopePreferences = {
+      'pre-commit': { 'code-reviewer': 1.5, 'security-reviewer': 1.3 },
+      'edit': { 'build-error-resolver': 1.2, 'refactor-cleaner': 1.1 },
+      'on-demand': { 'quest-designer': 1.2, 'architect': 1.1 }
+    };
+
+    const prefs = scopePreferences[context.scope] || {};
+    return prefs[intent.keywords[0]] || 0.5;
+  }
+
+  /**
+   * 记录路由历史
+   * @param {string} userIntent - 用户意图
+   * @param {Object} result - 路由结果
+   * @private
+   */
+  _recordHistory(userIntent, result) {
+    const entry = {
+      timestamp: Date.now(),
+      intent: userIntent.slice(0, 100),
+      agent: result.agent.name,
+      score: result.score
+    };
+
+    this._routeHistory.push(entry);
+
+    // 维护历史大小
+    if (this._routeHistory.length > this._historySize) {
+      this._routeHistory.shift();
+    }
+
+    // 更新命中率统计
+    this._updateAgentStats(result.agent.name);
+  }
+
+  /**
+   * 更新 Agent 命中率统计
+   * @param {string} agentName - Agent 名称
+   * @private
+   */
+  _updateAgentStats(agentName) {
+    const stats = this._agentStats.get(agentName) || { hits: 0, total: 0, hitRate: 0.5 };
+    stats.hits++;
+    stats.total++;
+    stats.hitRate = stats.hits / stats.total;
+    this._agentStats.set(agentName, stats);
+  }
+
+  /**
+   * 报告路由成功（用于更新统计）
+   * @param {string} agentName - Agent 名称
+   */
+  reportSuccess(agentName) {
+    const stats = this._agentStats.get(agentName) || { hits: 0, total: 0, hitRate: 0.5 };
+    stats.hits++;
+    stats.total++;
+    stats.hitRate = stats.hits / stats.total;
+    this._agentStats.set(agentName, stats);
+  }
+
+  /**
+   * 报告路由失败（用于更新统计）
+   * @param {string} agentName - Agent 名称
+   */
+  reportFailure(agentName) {
+    const stats = this._agentStats.get(agentName) || { hits: 0, total: 0, hitRate: 0.5 };
+    stats.total++;
+    stats.hitRate = stats.hits / stats.total;
+    this._agentStats.set(agentName, stats);
+  }
+
+  /**
+   * 获取路由历史
+   * @param {number} [limit] - 返回条数
+   * @returns {Array}
+   */
+  getHistory(limit) {
+    return limit ? this._routeHistory.slice(-limit) : this._routeHistory;
+  }
+
+  /**
+   * 获取 Agent 统计信息
+   * @returns {Map<string, Object>}
+   */
+  getAgentStats() {
+    return new Map(this._agentStats);
+  }
+
+  /**
+   * 获取路由统计摘要
+   * @returns {Object}
+   */
+  getRoutingStats() {
+    const total = this._routeHistory.length;
+    const agentCounts = {};
+    for (const entry of this._routeHistory) {
+      agentCounts[entry.agent] = (agentCounts[entry.agent] || 0) + 1;
+    }
+
+    return {
+      totalRoutes: total,
+      agentDistribution: agentCounts,
+      agentStats: Object.fromEntries(this._agentStats)
+    };
   }
 
   /**

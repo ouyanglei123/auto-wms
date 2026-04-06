@@ -172,7 +172,7 @@ export function getSourceDir() {
 /**
  * 上下文压缩策略配置
  * @readonly
- * @type {{MESSAGE_THRESHOLD: number, MAX_COMPRESSED_ENTRIES: number, KEY_INDICATORS: string[]}}
+ * @type {{MESSAGE_THRESHOLD: number, MAX_COMPRESSED_ENTRIES: number, KEY_INDICATORS: string[], DECISION_PATTERNS: string[]}}
  */
 export const CONTEXT_COMPRESSION = Object.freeze({
   // 触发压缩的阈值（消息数量）
@@ -200,8 +200,109 @@ export const CONTEXT_COMPRESSION = Object.freeze({
     '设计',
     '方案',
     'approach'
+  ],
+  // 决策点模式（必须保留）
+  DECISION_PATTERNS: [
+    /^.*(?:决定|决策|选择|方案|plan|decide|decision).*$/i,
+    /^.*(?:同意|批准|确认|confirm|approve).*$/i,
+    /^.*(?:拒绝|否决|reject|cancel).*$/i,
+    /^.*(?:继续|开始|执行|proceed|execute).*$/i
+  ],
+  // 任务上下文标记
+  TASK_MARKERS: [
+    { pattern: /^.*(?:Quest|Task|TODO).*\d+.*$/, weight: 2 },
+    { pattern: /^.*(?:完成|完成|finish|complete).*$/, weight: 1.5 }
   ]
 });
+
+/**
+ * 计算 TF-IDF 权重
+ * @param {string[]} terms - 词项数组
+ * @param {string[]} documents - 文档数组
+ * @returns {Map<string, number>} 词项权重
+ * @private
+ */
+function computeTfIdf(terms, documents) {
+  const tf = new Map();
+  const df = new Map();
+
+  // 计算 TF
+  for (const term of terms) {
+    tf.set(term, (tf.get(term) || 0) + 1);
+  }
+
+  // 计算 DF
+  for (const doc of documents) {
+    const uniqueTerms = new Set(doc.toLowerCase().split(/\s+/));
+    for (const term of uniqueTerms) {
+      df.set(term, (df.get(term) || 0) + 1);
+    }
+  }
+
+  // 计算 TF-IDF
+  const tfIdf = new Map();
+  const N = documents.length;
+  for (const [term, tfVal] of tf) {
+    const dfVal = df.get(term) || 1;
+    tfIdf.set(term, (tfVal / terms.length) * Math.log(N / dfVal));
+  }
+
+  return tfIdf;
+}
+
+/**
+ * 识别决策点
+ * @param {string} content - 消息内容
+ * @returns {boolean}
+ * @private
+ */
+function isDecisionPoint(content) {
+  return CONTEXT_COMPRESSION.DECISION_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+/**
+ * 计算消息重要性分数
+ * @param {Message} msg - 消息
+ * @param {number} index - 消息索引
+ * @param {number} total - 总消息数
+ * @param {Map<string, number>} tfIdf - TF-IDF 权重
+ * @returns {number}
+ * @private
+ */
+function computeMessageScore(msg, index, total, tfIdf) {
+  const content = msg.content || '';
+  let score = 0;
+
+  // 1. 位置权重：越接近当前越重要
+  const recencyWeight = index / total;
+  score += recencyWeight * 30;
+
+  // 2. 关键信息匹配
+  const keyMatches = CONTEXT_COMPRESSION.KEY_INDICATORS.filter((k) => content.includes(k)).length;
+  score += Math.min(keyMatches * 15, 45);
+
+  // 3. 决策点权重
+  if (isDecisionPoint(content)) {
+    score += 40;
+  }
+
+  // 4. TF-IDF 权重
+  const terms = content.toLowerCase().split(/\s+/);
+  let termScore = 0;
+  for (const term of terms) {
+    termScore += tfIdf.get(term) || 0;
+  }
+  score += Math.min(termScore * 10, 25);
+
+  // 5. 任务标记权重
+  for (const marker of CONTEXT_COMPRESSION.TASK_MARKERS) {
+    if (marker.pattern.test(content)) {
+      score += marker.weight * 10;
+    }
+  }
+
+  return score;
+}
 
 /**
  * 压缩对话上下文，保留关键信息
@@ -232,53 +333,61 @@ export function compressContext(messages, options = {}) {
     };
   }
 
-  // 提取关键信息
-  const keyMessages = messages.filter((msg) => {
-    const content = msg.content || '';
-    return CONTEXT_COMPRESSION.KEY_INDICATORS.some((indicator) => content.includes(indicator));
-  });
+  // 计算 TF-IDF
+  const documents = messages.map((m) => m.content || '');
+  const allTerms = documents.join(' ').toLowerCase().split(/\s+/).filter((t) => t.length >= 2);
+  const tfIdf = computeTfIdf(allTerms, documents);
 
-  // 提取最近的消息（最后 N 条保留）
-  const recentMessages = messages.slice(-maxEntries);
+  // 计算每条消息的分数
+  const scoredMessages = messages.map((msg, index) => ({
+    msg,
+    index,
+    score: computeMessageScore(msg, index, messages.length, tfIdf)
+  }));
 
-  // 合并去重（用 content 前 100 字符作为去重键）
-  const seen = new Set();
-  const merged = [];
+  // 按分数排序
+  scoredMessages.sort((a, b) => b.score - a.score);
 
-  for (const msg of [...keyMessages, ...recentMessages]) {
-    const key = (msg.content || '').slice(0, 100);
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(msg);
-    }
-  }
+  // 保留决策点（优先保留）
+  const decisionMessages = messages
+    .map((msg, index) => ({ msg, index }))
+    .filter(({ msg }) => isDecisionPoint(msg.content || ''));
 
-  // 截断到最大条目数
-  const kept = merged.slice(0, maxEntries);
+  // 构建最终保留列表（决策点 + 高分消息 + 最近消息）
+  const decisionIndices = new Set(decisionMessages.map((d) => d.index));
+  const recentIndices = new Set(messages.slice(-Math.floor(maxEntries / 2)).map((_, i) => messages.length - Math.floor(maxEntries / 2) + i));
+  const topScoredIndices = new Set(scoredMessages.slice(0, Math.floor(maxEntries / 2)).map((s) => s.index));
+
+  const keptIndices = new Set([...decisionIndices, ...recentIndices, ...topScoredIndices]);
+
+  // 确保不超过最大条目数
+  const kept = messages.filter((_, index) => keptIndices.has(index)).slice(0, maxEntries);
   const removedCount = messages.length - kept.length;
 
   // 生成压缩摘要
   const summaryParts = [
     `[上下文压缩] 原始消息: ${messages.length} 条 -> 保留: ${kept.length} 条`,
     `[上下文压缩] 压缩原因: 消息数 (${messages.length}) 超过阈值 (${threshold})`,
-    `[上下文压缩] 保留策略: 关键信息(${keyMessages.length}条) + 最近消息`
+    `[上下文压缩] 保留策略: 决策点(${decisionIndices.size}) + 高分(${topScoredIndices.size}) + 最近(${recentIndices.size})`
   ];
 
-  // 提取被移除消息中的关键决策和任务
-  const removedMessages = messages.filter((m) => !kept.includes(m));
+  // 提取被移除消息中的关键信息摘要
+  const removedMessages = messages.filter((_, i) => !keptIndices.has(i));
   const removedKeyInfo = removedMessages
     .filter((msg) => {
       const content = msg.content || '';
-      return CONTEXT_COMPRESSION.KEY_INDICATORS.some((i) => content.includes(i));
+      return (
+        CONTEXT_COMPRESSION.KEY_INDICATORS.some((i) => content.includes(i)) ||
+        isDecisionPoint(content)
+      );
     })
     .map((msg) => {
       const content = msg.content || '';
-      // 截取关键信息的前 200 字符
-      return content.length > 200 ? content.slice(0, 200) + '...' : content;
+      return content.length > 150 ? content.slice(0, 150) + '...' : content;
     });
 
   if (removedKeyInfo.length > 0) {
-    summaryParts.push(`[上下文压缩] 被移除的关键信息摘要:`);
+    summaryParts.push(`[上下文压缩] 被移除的关键信息 (前5条):`);
     for (const info of removedKeyInfo.slice(0, 5)) {
       summaryParts.push(`  - ${info}`);
     }
@@ -289,7 +398,12 @@ export function compressContext(messages, options = {}) {
     summary: summaryParts.join('\n'),
     keptCount: kept.length,
     removedCount,
-    keptMessages: kept
+    keptMessages: kept,
+    stats: {
+      decisionPoints: decisionIndices.size,
+      highScore: topScoredIndices.size,
+      recent: recentIndices.size
+    }
   };
 }
 

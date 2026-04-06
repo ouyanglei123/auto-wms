@@ -178,11 +178,18 @@ const BUILT_IN_AGENTS = [
 export class AgentRegistry {
   /**
    * @param {string} [projectDir] - 项目根目录
+   * @param {Object} [options] - 配置选项
+   * @param {boolean} [options.enableHealthCheck] - 启用健康检查（默认 false）
+   * @param {number} [options.healthCheckInterval] - 健康检查间隔（默认 60000ms）
    */
-  constructor(projectDir) {
+  constructor(projectDir, options = {}) {
     this.projectDir = projectDir || process.cwd();
     this.agents = new Map();
     this.logger = logger;
+    this._enableHealthCheck = options.enableHealthCheck ?? false;
+    this._healthCheckInterval = options.healthCheckInterval ?? 60000;
+    this._healthCheckTimer = null;
+    this._agentHealth = new Map(); // Agent 健康状态
   }
 
   /**
@@ -190,16 +197,161 @@ export class AgentRegistry {
    * @returns {Promise<number>} 注册的 Agent 数量
    */
   async initialize() {
-    // 加载内置 Agent
-    for (const manifest of BUILT_IN_AGENTS) {
+    // 加载内置 Agent（按依赖顺序）
+    const sortedBuiltIn = this._sortByDependencies(BUILT_IN_AGENTS);
+    for (const manifest of sortedBuiltIn) {
       this.agents.set(manifest.name, { ...manifest });
+      this._agentHealth.set(manifest.name, { status: 'healthy', lastCheck: Date.now() });
     }
 
     // 加载自定义 Agent（从项目 .claude/agents/ 目录）
     await this._loadCustomAgents();
 
+    // 启动健康检查（如果启用）
+    if (this._enableHealthCheck) {
+      this._startHealthCheck();
+    }
+
     this.logger.info(`Agent 注册表初始化完成：${this.agents.size} 个 Agent`);
     return this.agents.size;
+  }
+
+  /**
+   * 按依赖顺序排序 Agent
+   * @param {Array} agents - Agent 列表
+   * @returns {Array} 排序后的列表
+   * @private
+   */
+  _sortByDependencies(agents) {
+    const agentMap = new Map(agents.map((a) => [a.name, a]));
+    const visited = new Set();
+    const sorted = [];
+
+    const visit = (agent) => {
+      if (visited.has(agent.name)) return;
+      visited.add(agent.name);
+
+      // 先访问依赖的 Agent
+      if (agent.dependencies) {
+        for (const dep of agent.dependencies) {
+          const depAgent = agentMap.get(dep);
+          if (depAgent) visit(depAgent);
+        }
+      }
+
+      sorted.push(agent);
+    };
+
+    for (const agent of agents) {
+      visit(agent);
+    }
+
+    return sorted;
+  }
+
+  /**
+   * 启动健康检查
+   * @private
+   */
+  _startHealthCheck() {
+    if (this._healthCheckTimer) return;
+
+    this._healthCheckTimer = setInterval(async () => {
+      await this._performHealthCheck();
+    }, this._healthCheckInterval);
+
+    this.logger.debug('Agent 健康检查已启动');
+  }
+
+  /**
+   * 执行健康检查
+   * @private
+   */
+  async _performHealthCheck() {
+    for (const [name, agent] of this.agents) {
+      if (agent.source === 'built-in') {
+        // 内置 Agent 默认健康
+        this._agentHealth.set(name, { status: 'healthy', lastCheck: Date.now() });
+        continue;
+      }
+
+      // 自定义 Agent 检查文件是否存在
+      if (agent.filePath) {
+        const exists = await fs.pathExists(agent.filePath);
+        this._agentHealth.set(name, {
+          status: exists ? 'healthy' : 'unhealthy',
+          lastCheck: Date.now()
+        });
+      }
+    }
+  }
+
+  /**
+   * 获取 Agent 健康状态
+   * @param {string} name - Agent 名称
+   * @returns {Object|null} 健康状态
+   */
+  getHealth(name) {
+    return this._agentHealth.get(name) || null;
+  }
+
+  /**
+   * 获取所有 Agent 健康状态
+   * @returns {Map<string, Object>}
+   */
+  getAllHealth() {
+    return new Map(this._agentHealth);
+  }
+
+  /**
+   * 停止健康检查
+   */
+  stopHealthCheck() {
+    if (this._healthCheckTimer) {
+      clearInterval(this._healthCheckTimer);
+      this._healthCheckTimer = null;
+      this.logger.debug('Agent 健康检查已停止');
+    }
+  }
+
+  /**
+   * 动态注册 Agent（支持依赖校验）
+   * @param {import('./agent-types.js').AgentManifest} manifest
+   * @param {Object} [options]
+   * @param {boolean} [options.skipDependencyCheck] - 跳过依赖检查
+   * @returns {boolean}
+   */
+  registerAgent(manifest, options = {}) {
+    if (!manifest.name || !manifest.triggerKeywords || !manifest.capabilities) {
+      this.logger.error('Agent 清单必须包含 name, triggerKeywords, capabilities');
+      return false;
+    }
+
+    // 依赖检查
+    if (!options.skipDependencyCheck && manifest.dependencies) {
+      for (const dep of manifest.dependencies) {
+        if (!this.agents.has(dep)) {
+          this.logger.error(`Agent "${manifest.name}" 依赖 "${dep}" 但未注册`);
+          return false;
+        }
+      }
+    }
+
+    if (this.agents.has(manifest.name)) {
+      this.logger.warn(`Agent "${manifest.name}" 已存在，将被覆盖`);
+    }
+
+    this.agents.set(manifest.name, {
+      ...manifest,
+      source: manifest.source || 'dynamic',
+      state: manifest.state || AGENT_STATES.ACTIVE,
+      registeredAt: Date.now()
+    });
+
+    this._agentHealth.set(manifest.name, { status: 'healthy', lastCheck: Date.now() });
+
+    this.logger.info(`Agent 已动态注册: ${manifest.name}`);
+    return true;
   }
 
   /**
@@ -240,48 +392,57 @@ export class AgentRegistry {
   }
 
   /**
-   * 注册新的 Agent
-   * @param {import('./agent-types.js').AgentManifest} manifest
-   * @returns {boolean}
-   */
-  registerAgent(manifest) {
-    if (!manifest.name || !manifest.triggerKeywords || !manifest.capabilities) {
-      this.logger.error('Agent 清单必须包含 name, triggerKeywords, capabilities');
-      return false;
-    }
-
-    if (this.agents.has(manifest.name)) {
-      this.logger.warn(`Agent "${manifest.name}" 已存在，将被覆盖`);
-    }
-
-    this.agents.set(manifest.name, {
-      ...manifest,
-      source: manifest.source || 'custom',
-      state: manifest.state || AGENT_STATES.ACTIVE
-    });
-
-    this.logger.info(`Agent 已注册: ${manifest.name}`);
-    return true;
-  }
-
-  /**
    * 注销 Agent
    * @param {string} name - Agent 名称
+   * @param {Object} [options]
+   * @param {boolean} [options.force] - 强制注销（包括内置 Agent）
+   * @param {boolean} [options.cascade] - 级联注销依赖此 Agent 的 Agent
    * @returns {boolean}
    */
-  unregisterAgent(name) {
+  unregisterAgent(name, options = {}) {
     if (!this.agents.has(name)) {
       this.logger.warn(`Agent "${name}" 不存在`);
       return false;
     }
 
     const agent = this.agents.get(name);
-    if (agent.source === 'built-in') {
-      this.logger.warn(`无法注销内置 Agent: ${name}`);
+    if (agent.source === 'built-in' && !options.force) {
+      this.logger.warn(`无法注销内置 Agent: ${name}，使用 force 选项强制注销`);
       return false;
     }
 
+    // 检查是否有其他 Agent 依赖此 Agent
+    if (!options.cascade) {
+      for (const [, otherAgent] of this.agents) {
+        if (otherAgent.dependencies?.includes(name)) {
+          this.logger.warn(`Agent "${otherAgent.name}" 依赖 "${name}"，请先注销依赖者或使用 cascade`);
+          return false;
+        }
+      }
+    } else {
+      // 级联注销依赖者
+      const toRemove = [name];
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const [otherName, otherAgent] of this.agents) {
+          if (!toRemove.includes(otherName) && otherAgent.dependencies?.includes(name)) {
+            toRemove.push(otherName);
+            name = otherName;
+            changed = true;
+          }
+        }
+      }
+      for (const n of toRemove) {
+        this.agents.delete(n);
+        this._agentHealth.delete(n);
+        this.logger.info(`Agent 已级联注销: ${n}`);
+      }
+      return true;
+    }
+
     this.agents.delete(name);
+    this._agentHealth.delete(name);
     this.logger.info(`Agent 已注销: ${name}`);
     return true;
   }
