@@ -18,7 +18,9 @@ vi.mock('../src/index.js', () => ({
   runUpdate: vi.fn(),
   runUninstall: vi.fn(),
   runRoute: vi.fn(),
-  runWmsAuto: vi.fn()
+  runWmsAuto: vi.fn(),
+  runStatus: vi.fn(),
+  runDoctor: vi.fn()
 }));
 
 vi.mock('../src/utils.js', () => ({
@@ -66,7 +68,9 @@ function createHandlers() {
     runUpdate: vi.fn().mockResolvedValue(undefined),
     runUninstall: vi.fn().mockResolvedValue(undefined),
     runRoute: vi.fn().mockResolvedValue(undefined),
-    runWmsAuto: vi.fn().mockResolvedValue(undefined)
+    runWmsAuto: vi.fn().mockResolvedValue(undefined),
+    runStatus: vi.fn().mockResolvedValue(undefined),
+    runDoctor: vi.fn().mockResolvedValue(undefined)
   };
 }
 
@@ -147,5 +151,34 @@ describe('cli.js', () => {
 
   it('does not parse automatically when argv has no entry script', () => {
     expect(shouldParseCli(['node'], 'file:///cli.js')).toBe(false);
+  });
+
+  it('routes status through the injected handler with normalized options', async () => {
+    const handlers = createHandlers();
+    const program = createProgram(handlers);
+
+    await program.parseAsync(['node', 'auto', 'status', '--json', '--directory', '.'], {
+      from: 'node'
+    });
+
+    expect(handlers.runStatus).toHaveBeenCalledWith({
+      json: true,
+      directory: '.'
+    });
+  });
+
+  it('routes doctor through the injected handler with normalized options', async () => {
+    const handlers = createHandlers();
+    const program = createProgram(handlers);
+
+    await program.parseAsync(['node', 'auto', 'doctor', '--json', '--fix', '--directory', '.'], {
+      from: 'node'
+    });
+
+    expect(handlers.runDoctor).toHaveBeenCalledWith({
+      json: true,
+      fix: true,
+      directory: '.'
+    });
   });
 });

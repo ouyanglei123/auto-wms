@@ -12,6 +12,8 @@ import { logger } from './logger.js';
 import { DOCS_URL } from './config.js';
 import { WmsIntentMatcher } from './wms/wms-intent-matcher.js';
 import { ORCHESTRATION_MODE, WmsAutoOrchestrator } from './wms/runtime/index.js';
+import { collectStatus, renderStatusReport } from './status.js';
+import { collectDoctorReport, renderDoctorReport } from './doctor.js';
 
 /**
  * 交互模式 - 主菜单
@@ -238,5 +240,32 @@ export async function runWmsAuto(userIntent, options = {}) {
     console.log(JSON.stringify(result, null, 2));
   }
 
+  return result;
+}
+
+export async function runStatus(options = {}) {
+  const result = await collectStatus({ projectDir: options.directory });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  console.log(renderStatusReport(result));
+  return result;
+}
+
+export async function runDoctor(options = {}) {
+  const result = await collectDoctorReport({
+    projectDir: options.directory,
+    fix: Boolean(options.fix)
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  console.log(renderDoctorReport(result));
   return result;
 }

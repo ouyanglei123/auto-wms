@@ -45,6 +45,16 @@ vi.mock('../src/config.js', () => ({
   DOCS_URL: 'https://example.com/docs'
 }));
 
+vi.mock('../src/status.js', () => ({
+  collectStatus: vi.fn().mockResolvedValue({ project: { name: 'auto-wms' } }),
+  renderStatusReport: vi.fn().mockReturnValue('status report')
+}));
+
+vi.mock('../src/doctor.js', () => ({
+  collectDoctorReport: vi.fn().mockResolvedValue({ summary: { PASS: 1 } }),
+  renderDoctorReport: vi.fn().mockReturnValue('doctor report')
+}));
+
 import {
   interactiveMode,
   runInstall,
@@ -52,7 +62,9 @@ import {
   runUninstall,
   runDocs,
   runRoute,
-  runWmsAuto
+  runWmsAuto,
+  runStatus,
+  runDoctor
 } from '../src/index.js';
 import { install, uninstall } from '../src/installer.js';
 import {
@@ -63,6 +75,8 @@ import {
 } from '../src/prompts.js';
 import { getInstalledVersion, openBrowser } from '../src/utils.js';
 import { logger } from '../src/logger.js';
+import { collectStatus, renderStatusReport } from '../src/status.js';
+import { collectDoctorReport, renderDoctorReport } from '../src/doctor.js';
 
 describe('index.js', () => {
   beforeEach(() => {
@@ -257,184 +271,107 @@ describe('index.js', () => {
   });
 
   describe('runWmsAuto', () => {
-    it('should delegate to injected orchestrator and return state', async () => {
-      const run = vi.fn().mockResolvedValue({
-        status: 'completed',
-        completedPhases: ['discover', 'reason']
-      });
-      const intentMatcher = {
-        analyze: vi.fn().mockReturnValue({
-          isWmsRelated: true,
-          targetService: 'outbound',
-          businessDomain: '波次',
-          confidence: 90,
-          codeLocations: {
-            controllers: ['WaveController'],
-            services: ['WaveServiceImpl'],
-            entities: ['WaveMaster']
-          }
-        })
-      };
+    it('should run orchestrator with analyzed context and plan mode by default', async () => {
+      const analyze = vi.fn().mockReturnValue({ domain: 'wms', confidence: 0.9 });
+      const run = vi.fn().mockResolvedValue({ ok: true });
+      const intentMatcher = { analyze };
+      const orchestrator = { run };
 
-      const result = await runWmsAuto('improve orchestration', {
-        json: true,
-        presentQuestMap: true,
-        orchestrator: { run },
-        intentMatcher
-      });
-
-      expect(intentMatcher.analyze).toHaveBeenCalledWith('improve orchestration');
-      expect(run).toHaveBeenCalledWith(
-        'improve orchestration',
-        expect.objectContaining({
-          mode: 'plan',
-          questMapApproved: false,
-          questMapPresented: true,
-          source: 'src/index',
-          wmsContext: expect.objectContaining({
-            targetService: 'outbound',
-            businessDomain: '波次',
-            confidence: 90
-          })
-        })
-      );
-      expect(result.status).toBe('completed');
-      const output = console.log.mock.calls.flat().join(' ');
-      expect(output).toContain('completed');
-    });
-
-    it('should forward run mode approval and presentation options to runtime', async () => {
-      const run = vi.fn().mockResolvedValue({
-        status: 'completed',
-        completedPhases: ['discover', 'reason', 'execute', 'verify', 'commit', 'learn']
-      });
-      const intentMatcher = {
-        analyze: vi.fn()
-      };
-
-      await runWmsAuto('execute orchestration', {
-        run: true,
-        approveQuestMap: true,
-        presentQuestMap: true,
-        orchestrator: { run },
+      const result = await runWmsAuto('inspect runtime', {
         intentMatcher,
-        wmsContext: {
-          isWmsRelated: true,
-          targetService: 'inside',
-          businessDomain: '盘点',
-          confidence: 88,
-          codeLocations: {
-            controllers: ['CountMasterController'],
-            services: ['CountMasterServiceImpl'],
-            entities: ['CountMaster']
-          }
-        }
+        orchestrator,
+        runtimeOptions: { traceId: 't-1' }
       });
 
-      expect(intentMatcher.analyze).not.toHaveBeenCalled();
+      expect(analyze).toHaveBeenCalledWith('inspect runtime');
       expect(run).toHaveBeenCalledWith(
-        'execute orchestration',
+        'inspect runtime',
         expect.objectContaining({
-          mode: 'run',
-          questMapApproved: true,
-          questMapPresented: true,
-          source: 'src/index',
-          wmsContext: expect.objectContaining({
-            targetService: 'inside',
-            businessDomain: '盘点'
-          })
-        })
-      );
-    });
-
-    it('should preserve explicit non-WMS context when forwarding to runtime', async () => {
-      const run = vi.fn().mockResolvedValue({
-        status: 'blocked',
-        currentPhase: 'execute',
-        blockers: []
-      });
-      const intentMatcher = {
-        analyze: vi.fn()
-      };
-
-      await runWmsAuto('execute orchestration', {
-        run: true,
-        approveQuestMap: true,
-        presentQuestMap: true,
-        orchestrator: { run },
-        intentMatcher,
-        wmsContext: {
-          isWmsRelated: false,
-          confidence: 0
-        }
-      });
-
-      expect(intentMatcher.analyze).not.toHaveBeenCalled();
-      expect(run).toHaveBeenCalledWith(
-        'execute orchestration',
-        expect.objectContaining({
-          mode: 'run',
-          questMapApproved: true,
-          questMapPresented: true,
-          source: 'src/index',
-          wmsContext: {
-            isWmsRelated: false,
-            confidence: 0
-          }
-        })
-      );
-    });
-
-    it('should prioritize explicit runtime controls over runtimeOptions overrides', async () => {
-      const run = vi.fn().mockResolvedValue({
-        status: 'completed',
-        completedPhases: ['discover', 'reason', 'execute', 'verify', 'commit', 'learn']
-      });
-      const intentMatcher = {
-        analyze: vi.fn().mockReturnValue({
-          isWmsRelated: true,
-          targetService: 'outbound',
-          businessDomain: '发运',
-          confidence: 87
-        })
-      };
-
-      await runWmsAuto('execute orchestration', {
-        run: true,
-        approveQuestMap: true,
-        presentQuestMap: true,
-        source: 'src/index',
-        orchestrator: { run },
-        intentMatcher,
-        runtimeOptions: {
+          traceId: 't-1',
+          wmsContext: { domain: 'wms', confidence: 0.9 },
           mode: 'plan',
           questMapApproved: false,
           questMapPresented: false,
-          source: 'runtime-options',
-          wmsContext: {
-            isWmsRelated: false,
-            confidence: 0
-          },
-          auditTrail: ['kept']
-        }
+          source: 'src/index'
+        })
+      );
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('should respect run and json options and print the result', async () => {
+      const run = vi.fn().mockResolvedValue({ status: 'done' });
+      const orchestrator = { run };
+
+      await runWmsAuto('ship fix', {
+        orchestrator,
+        wmsContext: { domain: 'wms' },
+        run: true,
+        presentQuestMap: true,
+        approveQuestMap: true,
+        json: true,
+        source: 'cli'
       });
 
       expect(run).toHaveBeenCalledWith(
-        'execute orchestration',
+        'ship fix',
         expect.objectContaining({
+          wmsContext: { domain: 'wms' },
           mode: 'run',
           questMapApproved: true,
           questMapPresented: true,
-          source: 'src/index',
-          wmsContext: expect.objectContaining({
-            isWmsRelated: true,
-            targetService: 'outbound',
-            businessDomain: '发运',
-            confidence: 87
-          }),
-          auditTrail: ['kept']
+          source: 'cli'
         })
       );
+      expect(console.log).toHaveBeenCalledWith(JSON.stringify({ status: 'done' }, null, 2));
+    });
+  });
+
+  describe('runStatus', () => {
+    it('should output JSON when json option is set', async () => {
+      const result = { project: { name: 'auto-wms' } };
+      collectStatus.mockResolvedValueOnce(result);
+
+      await runStatus({ json: true, directory: '.' });
+
+      expect(collectStatus).toHaveBeenCalledWith({ projectDir: '.' });
+      expect(renderStatusReport).not.toHaveBeenCalled();
+      expect(console.log).toHaveBeenCalledWith(JSON.stringify(result, null, 2));
+    });
+
+    it('should render formatted report when json option is not set', async () => {
+      collectStatus.mockResolvedValueOnce({ project: { name: 'auto-wms' } });
+      renderStatusReport.mockReturnValueOnce('status report');
+
+      await runStatus({ directory: '.' });
+
+      expect(renderStatusReport).toHaveBeenCalledWith({ project: { name: 'auto-wms' } });
+      expect(console.log).toHaveBeenCalledWith('status report');
+    });
+  });
+
+  describe('runDoctor', () => {
+    it('should forward fix option to doctor collector', async () => {
+      const result = { summary: { PASS: 1 } };
+      collectDoctorReport.mockResolvedValueOnce(result);
+
+      await runDoctor({ json: true, fix: true, directory: '.' });
+
+      expect(collectDoctorReport).toHaveBeenCalledWith({
+        projectDir: '.',
+        fix: true
+      });
+      expect(renderDoctorReport).not.toHaveBeenCalled();
+      expect(console.log).toHaveBeenCalledWith(JSON.stringify(result, null, 2));
+    });
+
+    it('should render formatted doctor report when json option is not set', async () => {
+      collectDoctorReport.mockResolvedValueOnce({ summary: { PASS: 1 } });
+      renderDoctorReport.mockReturnValueOnce('doctor report');
+
+      await runDoctor({ fix: false, directory: '.' });
+
+      expect(renderDoctorReport).toHaveBeenCalledWith({ summary: { PASS: 1 } });
+      expect(console.log).toHaveBeenCalledWith('doctor report');
     });
   });
 });

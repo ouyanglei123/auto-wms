@@ -9,7 +9,9 @@ import {
   runUpdate,
   runUninstall,
   runRoute,
-  runWmsAuto
+  runWmsAuto,
+  runStatus,
+  runDoctor
 } from '../src/index.js';
 import { getPackageVersion, COMPONENTS, openBrowser } from '../src/utils.js';
 import { DOCS_URL } from '../src/config.js';
@@ -24,7 +26,9 @@ const defaultHandlers = {
   runUpdate,
   runUninstall,
   runRoute,
-  runWmsAuto
+  runWmsAuto,
+  runStatus,
+  runDoctor
 };
 
 export function createProgram(handlers = defaultHandlers) {
@@ -450,6 +454,42 @@ export function createProgram(handlers = defaultHandlers) {
     .action(async (intent, options) => {
       try {
         await handlers.runRoute(intent, options);
+      } catch (error) {
+        console.error(chalk.red('错误：'), error.message);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command('status')
+    .description('查看项目状态和能力安装情况')
+    .option('-j, --json', '以 JSON 格式输出')
+    .option('-d, --directory <path>', '指定项目目录')
+    .action(async (options) => {
+      try {
+        await handlers.runStatus({
+          json: Boolean(options.json),
+          directory: options.directory
+        });
+      } catch (error) {
+        console.error(chalk.red('错误：'), error.message);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command('doctor')
+    .description('环境诊断并输出修复建议')
+    .option('-j, --json', '以 JSON 格式输出')
+    .option('--fix', '执行自动修复（当前版本保持只读诊断）')
+    .option('-d, --directory <path>', '指定项目目录')
+    .action(async (options) => {
+      try {
+        await handlers.runDoctor({
+          json: Boolean(options.json),
+          fix: Boolean(options.fix),
+          directory: options.directory
+        });
       } catch (error) {
         console.error(chalk.red('错误：'), error.message);
         process.exit(1);
