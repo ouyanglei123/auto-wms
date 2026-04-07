@@ -7,6 +7,7 @@ const execFileAsync = promisify(execFile);
 const DEFAULT_COMMIT_LIMIT = 200;
 const MAX_COMMIT_LIMIT = 1000;
 const CONVENTIONAL_TYPES = ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'build', 'ci'];
+const MIN_CONVENTIONAL_COVERAGE = 0.5;
 
 function clampCommitLimit(value) {
   const parsed = Number.parseInt(value, 10);
@@ -51,7 +52,8 @@ function buildCommitConventionObservation(messages, projectName) {
   }
 
   const { conventionalCount, typeCounts } = getConventionalStats(messages);
-  if (!conventionalCount) {
+  const coverageRatio = conventionalCount / messages.length;
+  if (!conventionalCount || coverageRatio <= MIN_CONVENTIONAL_COVERAGE) {
     return null;
   }
 
@@ -62,7 +64,7 @@ function buildCommitConventionObservation(messages, projectName) {
     .filter((type) => CONVENTIONAL_TYPES.includes(type));
 
   const supportedTypes = dominantTypes.length ? dominantTypes : CONVENTIONAL_TYPES.slice(0, 4);
-  const coverage = Math.round((conventionalCount / messages.length) * 100);
+  const coverage = Math.round(coverageRatio * 100);
 
   return {
     pattern: 'Repository uses conventional commit prefixes',

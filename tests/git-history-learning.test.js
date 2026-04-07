@@ -61,6 +61,33 @@ describe('git-history-learning', () => {
     });
   });
 
+  it('returns null when conventional commits are not the dominant history pattern', () => {
+    const observation = buildCommitConventionObservation(
+      ['temporary note', 'feat: add router', 'misc cleanup', 'follow-up change'],
+      'auto-wms'
+    );
+
+    expect(observation).toBeNull();
+  });
+
+  it('requires more than half of commits to match conventional format', () => {
+    expect(
+      buildCommitConventionObservation(
+        ['feat: add router', 'fix: tighten defaults', 'misc', 'note'],
+        'auto-wms'
+      )
+    ).toBeNull();
+
+    expect(
+      buildCommitConventionObservation(
+        ['feat: add router', 'fix: tighten defaults', 'docs: update learn command', 'misc', 'note'],
+        'auto-wms'
+      )
+    ).toMatchObject({
+      pattern: 'Repository uses conventional commit prefixes'
+    });
+  });
+
   it('skips learning when repository has no commits yet', async () => {
     const result = await learnFromGitHistory({ projectDir: tempDir, projectName: 'demo' });
 

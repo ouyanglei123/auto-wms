@@ -63,6 +63,47 @@ describe('task-event-learning', () => {
     expect(observation.tags).toEqual(['router', 'registry']);
   });
 
+  it('falls back to task summary when instinct payload is invalid', () => {
+    const observation = extractObservation({
+      instinct: {
+        pattern: 'Guard dangerous defaults'
+      },
+      task_summary: {
+        patterns: ['Route maintenance intents through registry agents'],
+        key_decisions: ['Keep CanonicalRouter generic'],
+        evidence: 'src/router/agent-registry.js',
+        tags: 'router'
+      }
+    });
+
+    expect(observation).toEqual({
+      pattern: 'Route maintenance intents through registry agents',
+      action: 'When similar tasks appear, apply: Keep CanonicalRouter generic',
+      source: 'TaskCompleted hook',
+      evidence: ['src/router/agent-registry.js'],
+      tags: ['router']
+    });
+  });
+
+  it('uses scalar summary action when provided', () => {
+    const observation = extractObservation({
+      task_summary: {
+        patterns: ['Guard dangerous defaults'],
+        actions: 'Require explicit opt-in for risky automation',
+        evidence: 'src/knowledge/knowledge-steward.js',
+        tags: 'security'
+      }
+    });
+
+    expect(observation).toEqual({
+      pattern: 'Guard dangerous defaults',
+      action: 'Require explicit opt-in for risky automation',
+      source: 'TaskCompleted hook',
+      evidence: ['src/knowledge/knowledge-steward.js'],
+      tags: ['security']
+    });
+  });
+
   it('returns skipped result when no reusable pattern exists', async () => {
     const result = await learnFromTaskEvent(
       { task_summary: { evidence: ['only evidence'] } },
@@ -94,5 +135,40 @@ describe('task-event-learning', () => {
     expect(doc.candidates[0].action).toBe(
       'When similar tasks appear, apply: Require explicit opt-in for risky automation'
     );
+  });
+
+  it('persists normalized summary-derived observation when invalid instinct falls back', async () => {
+    const event = {
+      instinct: {
+        pattern: '   ',
+        action: '  '
+      },
+      task_summary: {
+        patterns: ['Guard dangerous defaults'],
+        key_decisions: ['Require explicit opt-in for risky automation'],
+        evidence: [' src/knowledge/knowledge-steward.js ', 'src/knowledge/knowledge-steward.js'],
+        tags: [' security ', 'security', 'defaults']
+      }
+    };
+
+    const result = await learnFromTaskEvent(event, { projectDir: tempDir });
+    expect(result.skipped).toBe(false);
+    expect(result.observation).toEqual({
+      pattern: 'Guard dangerous defaults',
+      action: 'When similar tasks appear, apply: Require explicit opt-in for risky automation',
+      source: 'TaskCompleted hook',
+      evidence: ['src/knowledge/knowledge-steward.js'],
+      tags: ['security', 'defaults']
+    });
+
+    const candidatesPath = path.join(tempDir, '.aimax', 'instincts', 'candidates.yaml');
+    const doc = parse(await fs.readFile(candidatesPath, 'utf-8'));
+    expect(doc.candidates).toHaveLength(1);
+    expect(doc.candidates[0].pattern).toBe('Guard dangerous defaults');
+    expect(doc.candidates[0].action).toBe(
+      'When similar tasks appear, apply: Require explicit opt-in for risky automation'
+    );
+    expect(doc.candidates[0].evidence).toEqual(['src/knowledge/knowledge-steward.js']);
+    expect(doc.candidates[0].tags).toEqual(['security', 'defaults']);
   });
 });

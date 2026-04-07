@@ -3,19 +3,13 @@ import { InstinctManager } from './instinct-manager.js';
 const DEFAULT_SOURCE = 'TaskCompleted hook';
 
 function normalizeList(values) {
-  if (!Array.isArray(values)) {
-    return [];
-  }
-
-  return [...new Set(values.map((value) => String(value).trim()).filter(Boolean))];
+  const list = Array.isArray(values) ? values : values ? [values] : [];
+  return [...new Set(list.map((value) => String(value).trim()).filter(Boolean))];
 }
 
 function pickFirstString(values) {
-  if (!Array.isArray(values)) {
-    return '';
-  }
-
-  const match = values.map((value) => String(value).trim()).find(Boolean);
+  const list = Array.isArray(values) ? values : values ? [values] : [];
+  const match = list.map((value) => String(value).trim()).find(Boolean);
   return match || '';
 }
 
@@ -36,8 +30,9 @@ function buildObservation(payload = {}) {
 }
 
 function extractObservation(event = {}) {
-  if (event.instinct) {
-    return buildObservation(event.instinct);
+  const instinctObservation = event.instinct ? buildObservation(event.instinct) : null;
+  if (instinctObservation) {
+    return instinctObservation;
   }
 
   const summary = event.task_summary || event.summary || {};
