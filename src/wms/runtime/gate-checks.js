@@ -144,4 +144,14 @@ export function assertPhaseCanStart(state, phase) {
 
 export function assertExecutionWriteGate(state) {
   assertPaths(state, 'execute', EXECUTION_WRITE_GATE);
+
+  if (state.artifacts.discover?.wmsContext?.isWmsRelated === false) {
+    throw new OrchestrationBlockedError(
+      'Phase execute is blocked. Missing prerequisites: artifacts.discover.wmsContext.isWmsRelated',
+      {
+        phase: 'execute',
+        missingPaths: ['artifacts.discover.wmsContext.isWmsRelated']
+      }
+    );
+  }
 }

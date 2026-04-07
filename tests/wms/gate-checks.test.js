@@ -61,6 +61,22 @@ describe('gate-checks', () => {
     expect(() => assertExecutionWriteGate(state)).toThrow(/questDesigner\.invoked/);
   });
 
+  it('blocks execute writes when discover only has non-WMS fallback context', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.discover.healthReport = { status: 'green' };
+    state.artifacts.discover.wmsContext = {
+      isWmsRelated: false,
+      confidence: 0
+    };
+    state.artifacts.reason.questMap = 'Quest Map is pending runtime integration.';
+    state.artifacts.reason.questDesigner = { invoked: true, agent: 'quest-designer' };
+    state.approvals.questMapPresented = true;
+    state.approvals.questMapApproved = true;
+
+    expect(() => assertExecutionWriteGate(state)).toThrowError(OrchestrationBlockedError);
+    expect(() => assertExecutionWriteGate(state)).toThrow(/wmsContext\.isWmsRelated/);
+  });
+
   it('blocks verify phase when execute artifact has no real execution evidence', () => {
     const state = createInitialOrchestrationState('test');
     state.artifacts.discover.healthReport = { status: 'green' };

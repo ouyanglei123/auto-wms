@@ -346,5 +346,43 @@ describe('index.js', () => {
         })
       );
     });
+
+    it('should preserve explicit non-WMS context when forwarding to runtime', async () => {
+      const run = vi.fn().mockResolvedValue({
+        status: 'blocked',
+        currentPhase: 'execute',
+        blockers: []
+      });
+      const intentMatcher = {
+        analyze: vi.fn()
+      };
+
+      await runWmsAuto('execute orchestration', {
+        run: true,
+        approveQuestMap: true,
+        presentQuestMap: true,
+        orchestrator: { run },
+        intentMatcher,
+        wmsContext: {
+          isWmsRelated: false,
+          confidence: 0
+        }
+      });
+
+      expect(intentMatcher.analyze).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledWith(
+        'execute orchestration',
+        expect.objectContaining({
+          mode: 'run',
+          questMapApproved: true,
+          questMapPresented: true,
+          source: 'src/index',
+          wmsContext: {
+            isWmsRelated: false,
+            confidence: 0
+          }
+        })
+      );
+    });
   });
 });

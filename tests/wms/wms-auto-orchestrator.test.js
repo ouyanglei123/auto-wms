@@ -204,6 +204,30 @@ describe('WmsAutoOrchestrator', () => {
     expect(executors.execute).not.toHaveBeenCalled();
   });
 
+  it('blocks run mode when only non-WMS fallback context is available', async () => {
+    const executors = createExecutors();
+    const orchestrator = new WmsAutoOrchestrator({ executors });
+
+    const state = await orchestrator.run('improve orchestration', {
+      mode: ORCHESTRATION_MODE.RUN,
+      questMapApproved: true,
+      questMapPresented: true,
+      source: 'test',
+      wmsContext: {
+        isWmsRelated: false,
+        confidence: 0
+      }
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.BLOCKED);
+    expect(state.currentPhase).toBe('execute');
+    expect(executors.execute).not.toHaveBeenCalled();
+    expect(state.blockers[0].details).toMatchObject({
+      phase: 'execute',
+      missingPaths: ['artifacts.discover.wmsContext.isWmsRelated']
+    });
+  });
+
   it('preserves plan mode quest map presentation state after reason phase', async () => {
     const executors = createExecutors();
     const orchestrator = new WmsAutoOrchestrator({ executors });
