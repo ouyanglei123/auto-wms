@@ -104,6 +104,7 @@ function createDefaultExecutors() {
     commit: async () =>
       createPlaceholderArtifact('commit', {
         summary: 'pending',
+        persisted: false,
         reason: 'Default commit executor is a placeholder and cannot persist changes.'
       }),
     learn: async () =>
@@ -186,7 +187,7 @@ function isCommitArtifactSufficient(result) {
     return Boolean(getSkipReason(result));
   }
 
-  return hasNonEmptyString(result?.summary);
+  return result?.persisted === true && hasNonEmptyString(result?.summary);
 }
 
 function isLearnArtifactSufficient(result) {
@@ -237,6 +238,13 @@ function getPhaseResultReason(phase, result) {
     return (
       getSkipReason(result?.verification) ||
       'verify phase requires checks or explicit skip semantics.'
+    );
+  }
+
+  if (phase === 'commit') {
+    return (
+      getSkipReason(result) ||
+      'commit phase requires persisted === true and a non-empty summary or explicit skip semantics.'
     );
   }
 

@@ -60,7 +60,7 @@ function hasCommitEvidence(commitArtifact) {
     return hasNonEmptyString(commitArtifact.reason);
   }
 
-  return hasNonEmptyString(commitArtifact?.summary);
+  return commitArtifact?.persisted === true && hasNonEmptyString(commitArtifact?.summary);
 }
 
 const PHASE_EVIDENCE_VALIDATORS = {
@@ -74,7 +74,8 @@ const PHASE_EVIDENCE_VALIDATORS = {
   },
   learn: {
     isValid: (state) => hasCommitEvidence(state.artifacts.commit),
-    error: 'artifacts.commit.summary or explicit skip reason'
+    error:
+      'artifacts.commit.persisted === true and artifacts.commit.summary or explicit skip reason'
   }
 };
 

@@ -142,7 +142,18 @@ describe('gate-checks', () => {
     };
 
     expect(() => assertPhaseCanStart(state, 'learn')).toThrowError(OrchestrationBlockedError);
-    expect(() => assertPhaseCanStart(state, 'learn')).toThrow(/artifacts\.commit\.summary/);
+    expect(() => assertPhaseCanStart(state, 'learn')).toThrow(/artifacts\.commit\.persisted/);
+  });
+
+  it('blocks learn phase when commit artifact has a summary but no persisted evidence', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.commit = {
+      summary: 'commit pending publication',
+      persisted: false
+    };
+
+    expect(() => assertPhaseCanStart(state, 'learn')).toThrowError(OrchestrationBlockedError);
+    expect(() => assertPhaseCanStart(state, 'learn')).toThrow(/artifacts\.commit\.persisted/);
   });
 
   it('allows learn phase when commit artifact is explicitly skipped with a reason', () => {

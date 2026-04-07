@@ -34,7 +34,8 @@ function createExecutors(overrides = {}) {
       }
     }),
     commit: vi.fn().mockResolvedValue({
-      summary: 'done'
+      summary: 'done',
+      persisted: true
     }),
     learn: vi.fn().mockResolvedValue({
       learning: {
@@ -310,7 +311,7 @@ describe('WmsAutoOrchestrator', () => {
   });
 
   it('maps legacy deliver executor overrides to commit phase', async () => {
-    const deliver = vi.fn().mockResolvedValue({ summary: 'legacy done' });
+    const deliver = vi.fn().mockResolvedValue({ summary: 'legacy done', persisted: true });
     const orchestrator = new WmsAutoOrchestrator({
       executors: createExecutors({ commit: undefined, deliver })
     });
@@ -616,6 +617,31 @@ describe('WmsAutoOrchestrator', () => {
     expect(state.status).toBe(PHASE_STATUS.BLOCKED);
     expect(state.currentPhase).toBe('commit');
     expect(executors.learn).not.toHaveBeenCalled();
+  });
+
+  it('blocks commit phase when commit output has only a summary without persisted evidence', async () => {
+    const executors = createExecutors({
+      commit: vi.fn().mockResolvedValue({
+        summary: 'done',
+        persisted: false
+      })
+    });
+    const orchestrator = new WmsAutoOrchestrator({ executors });
+
+    const state = await orchestrator.run('improve orchestration', {
+      mode: ORCHESTRATION_MODE.RUN,
+      questMapApproved: true,
+      questMapPresented: true,
+      source: 'test'
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.BLOCKED);
+    expect(state.currentPhase).toBe('commit');
+    expect(executors.learn).not.toHaveBeenCalled();
+    expect(state.blockers[0].details).toMatchObject({
+      phase: 'commit',
+      reason: 'insufficient-phase-result'
+    });
   });
 
   it('blocks learn phase when learning output is empty', async () => {
