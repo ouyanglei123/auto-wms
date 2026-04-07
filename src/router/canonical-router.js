@@ -16,6 +16,7 @@
 import { logger } from '../logger.js';
 import { COMPLEXITY_LEVELS, AGENT_STATES } from './agent-types.js';
 import { AgentRegistry } from './agent-registry.js';
+import { WmsIntentMatcher } from '../wms/wms-intent-matcher.js';
 
 /**
  * 默认 Agent（无匹配时的兜底）
@@ -24,6 +25,8 @@ const DEFAULT_AGENT = {
   name: 'quest-designer',
   reason: '无精确匹配，回退到闯关设计 Agent'
 };
+
+const DEFAULT_HIT_RATE = 0.5;
 
 /**
  * 复杂度评估关键词
@@ -97,6 +100,16 @@ const SECURITY_KEYWORDS = [
   'encrypt'
 ];
 
+const SCOPE_PREFERENCES = {
+  'pre-commit': { 'code-reviewer': 1.5, 'security-reviewer': 1.3 },
+  edit: { 'build-error-resolver': 1.2, 'refactor-cleaner': 1.1 },
+  'on-demand': { 'quest-designer': 1.2, architect: 1.1 }
+};
+
+function uniq(values) {
+  return [...new Set((values || []).filter(Boolean))];
+}
+
 export class CanonicalRouter {
   /**
    * @param {AgentRegistry} [registry] - Agent 注册表
@@ -110,8 +123,9 @@ export class CanonicalRouter {
     this._initialized = false;
     this._enableHistory = options.enableHistory ?? true;
     this._historySize = options.historySize ?? 100;
-    this._routeHistory = []; // 路由历史
-    this._agentStats = new Map(); // Agent 命中率统计
+    this._routeHistory = [];
+    this._agentStats = new Map();
+    this._wmsIntentMatcher = options.wmsIntentMatcher || new WmsIntentMatcher();
   }
 
   /**
@@ -143,7 +157,6 @@ export class CanonicalRouter {
       return this._defaultRoute('空意图');
     }
 
-    // 1. 意图分析
     const intent = this._analyzeIntent(userIntent, context);
 
     this.logger.info(
@@ -151,41 +164,33 @@ export class CanonicalRouter {
         `复杂度=${intent.complexity} 安全敏感=${intent.securitySensitive}`
     );
 
-    // 2. 候选匹配
     const candidates = this.registry.findCandidates(intent.keywords);
 
     if (candidates.length === 0) {
       return this._defaultRoute('无匹配 Agent');
     }
 
-    // 3. 应用上下文过滤
     const filtered = this._applyContextFilters(candidates, intent, context);
 
     if (filtered.length === 0) {
       return this._defaultRoute('上下文过滤后无匹配');
     }
 
-    // 4. 应用自适应权重（基于历史命中率）
     const weighted = this._applyAdaptiveWeighting(filtered, intent, context);
-
-    // 5. 安全优先提升
     const ranked = this._applySecurityPriority(weighted, intent);
-
-    // 6. 选择最优候选
     const selected = ranked[0];
-
-    // 7. 构建路由结果
+    const routeId = this._createRouteId();
     const result = {
       agent: selected.agent,
       score: selected.score,
-      matchReason: this._buildMatchReason(selected),
+      matchReason: this._buildMatchReason(selected, intent),
       fallbackChain: this.registry.getFallbackChain(selected.agent.name),
-      isDefault: false
+      isDefault: false,
+      routeId
     };
 
-    // 8. 记录路由历史
     if (this._enableHistory) {
-      this._recordHistory(userIntent, result);
+      this._recordHistory(routeId, userIntent, intent, result);
     }
 
     this.logger.info(
@@ -206,101 +211,102 @@ export class CanonicalRouter {
   _applyAdaptiveWeighting(candidates, intent, context) {
     if (!this._enableHistory) return candidates;
 
-    // 上下文相似度权重
-    const contextWeight = this._computeContextSimilarity(intent, context);
+    return candidates
+      .map((candidate) => {
+        const stats = this._agentStats.get(candidate.agent.name);
+        const hitRate = stats?.hitRate || DEFAULT_HIT_RATE;
+        const contextWeight = this._computeContextSimilarity(candidate.agent.name, intent, context);
+        const contextualBoost = contextWeight * hitRate * 10;
 
-    return candidates.map((c) => {
-      const stats = this._agentStats.get(c.agent.name);
-      const hitRate = stats?.hitRate || 0.5; // 默认 50% 命中率
-      const contextualBoost = contextWeight * hitRate * 10;
-
-      return {
-        ...c,
-        score: c.score + contextualBoost
-      };
-    }).sort((a, b) => b.score - a.score);
+        return {
+          ...candidate,
+          score: candidate.score + contextualBoost
+        };
+      })
+      .sort((a, b) => b.score - a.score);
   }
 
   /**
    * 计算上下文相似度
+   * @param {string} agentName - Agent 名称
    * @param {Object} intent - 意图
    * @param {Object} context - 上下文
    * @returns {number}
    * @private
    */
-  _computeContextSimilarity(intent, context) {
-    if (!context.scope) return 0.5;
+  _computeContextSimilarity(agentName, intent, context) {
+    let score = 0.5;
 
-    // 不同 scope 对不同 Agent 有不同偏好
-    const scopePreferences = {
-      'pre-commit': { 'code-reviewer': 1.5, 'security-reviewer': 1.3 },
-      'edit': { 'build-error-resolver': 1.2, 'refactor-cleaner': 1.1 },
-      'on-demand': { 'quest-designer': 1.2, 'architect': 1.1 }
-    };
+    if (context.scope) {
+      const prefs = SCOPE_PREFERENCES[context.scope] || {};
+      score = prefs[agentName] || score;
+    }
 
-    const prefs = scopePreferences[context.scope] || {};
-    return prefs[intent.keywords[0]] || 0.5;
+    if (intent.wms?.isWmsRelated) {
+      if (agentName === 'architect' && intent.complexity === COMPLEXITY_LEVELS.HIGH) {
+        score += 0.2;
+      }
+
+      if (agentName === 'quest-designer') {
+        score += 0.1;
+      }
+    }
+
+    return score;
   }
 
   /**
    * 记录路由历史
+   * @param {string} routeId
    * @param {string} userIntent - 用户意图
+   * @param {Object} intent - 意图分析结果
    * @param {Object} result - 路由结果
    * @private
    */
-  _recordHistory(userIntent, result) {
+  _recordHistory(routeId, userIntent, intent, result) {
     const entry = {
+      routeId,
       timestamp: Date.now(),
       intent: userIntent.slice(0, 100),
       agent: result.agent.name,
-      score: result.score
+      score: result.score,
+      scope: intent.scope || null,
+      outcome: 'proposed'
     };
 
     this._routeHistory.push(entry);
 
-    // 维护历史大小
     if (this._routeHistory.length > this._historySize) {
       this._routeHistory.shift();
     }
-
-    // 更新命中率统计
-    this._updateAgentStats(result.agent.name);
-  }
-
-  /**
-   * 更新 Agent 命中率统计
-   * @param {string} agentName - Agent 名称
-   * @private
-   */
-  _updateAgentStats(agentName) {
-    const stats = this._agentStats.get(agentName) || { hits: 0, total: 0, hitRate: 0.5 };
-    stats.hits++;
-    stats.total++;
-    stats.hitRate = stats.hits / stats.total;
-    this._agentStats.set(agentName, stats);
   }
 
   /**
    * 报告路由成功（用于更新统计）
-   * @param {string} agentName - Agent 名称
+   * @param {string} routeIdOrAgentName - routeId 或 Agent 名称
    */
-  reportSuccess(agentName) {
-    const stats = this._agentStats.get(agentName) || { hits: 0, total: 0, hitRate: 0.5 };
-    stats.hits++;
-    stats.total++;
-    stats.hitRate = stats.hits / stats.total;
-    this._agentStats.set(agentName, stats);
+  reportSuccess(routeIdOrAgentName) {
+    const agentName = this._resolveAgentName(routeIdOrAgentName);
+    if (!agentName) {
+      return;
+    }
+
+    this._markRouteOutcome(routeIdOrAgentName, 'success');
+    this._recordAgentOutcome(agentName, true);
   }
 
   /**
    * 报告路由失败（用于更新统计）
-   * @param {string} agentName - Agent 名称
+   * @param {string} routeIdOrAgentName - routeId 或 Agent 名称
    */
-  reportFailure(agentName) {
-    const stats = this._agentStats.get(agentName) || { hits: 0, total: 0, hitRate: 0.5 };
-    stats.total++;
-    stats.hitRate = stats.hits / stats.total;
-    this._agentStats.set(agentName, stats);
+  reportFailure(routeIdOrAgentName) {
+    const agentName = this._resolveAgentName(routeIdOrAgentName);
+    if (!agentName) {
+      return;
+    }
+
+    this._markRouteOutcome(routeIdOrAgentName, 'failure');
+    this._recordAgentOutcome(agentName, false);
   }
 
   /**
@@ -327,13 +333,17 @@ export class CanonicalRouter {
   getRoutingStats() {
     const total = this._routeHistory.length;
     const agentCounts = {};
+    const outcomes = { proposed: 0, success: 0, failure: 0 };
+
     for (const entry of this._routeHistory) {
       agentCounts[entry.agent] = (agentCounts[entry.agent] || 0) + 1;
+      outcomes[entry.outcome] = (outcomes[entry.outcome] || 0) + 1;
     }
 
     return {
       totalRoutes: total,
       agentDistribution: agentCounts,
+      outcomes,
       agentStats: Object.fromEntries(this._agentStats)
     };
   }
@@ -347,29 +357,31 @@ export class CanonicalRouter {
    */
   _analyzeIntent(userIntent, context) {
     const lowerIntent = userIntent.toLowerCase();
-
-    // 提取关键词
     const keywords = lowerIntent.split(/[\s,，。.、；;！!？?：:]+/).filter((w) => w.length > 1);
-
-    // 评估复杂度
     const complexity = this._assessComplexity(lowerIntent);
-
-    // 检查安全敏感性
     const securitySensitive = SECURITY_KEYWORDS.some((kw) => lowerIntent.includes(kw));
-
-    // 提取文件扩展名作为额外关键词
     const fileExtensions = (context.files || [])
       .map((f) => {
         const ext = f.split('.').pop();
         return ext ? `.${ext}` : '';
       })
       .filter(Boolean);
+    const wms = this._wmsIntentMatcher.analyze(userIntent);
+    const wmsKeywords = wms.isWmsRelated
+      ? uniq([wms.targetService, wms.businessDomain, ...(wms.matchedKeywords || [])])
+      : [];
 
     return {
-      keywords: [...keywords, ...fileExtensions],
+      keywords: uniq([
+        ...keywords,
+        ...fileExtensions,
+        ...wmsKeywords.map((item) => String(item).toLowerCase())
+      ]),
       complexity,
       securitySensitive,
-      originalIntent: userIntent
+      originalIntent: userIntent,
+      scope: context.scope || null,
+      wms
     };
   }
 
@@ -394,10 +406,9 @@ export class CanonicalRouter {
       }
     }
 
-    // 取最高分
     const maxScore = Math.max(...Object.values(scores));
     if (maxScore === 0) {
-      return COMPLEXITY_LEVELS.MEDIUM; // 默认中等
+      return COMPLEXITY_LEVELS.MEDIUM;
     }
 
     for (const [level, score] of Object.entries(scores)) {
@@ -420,7 +431,6 @@ export class CanonicalRouter {
   _applyContextFilters(candidates, intent, context) {
     let filtered = candidates;
 
-    // 如果上下文指定了安全相关标志，优先安全 Agent
     if (context.flags && context.flags.securityReview) {
       const securityAgent = candidates.find((c) => c.agent.name === 'security-reviewer');
       if (securityAgent) {
@@ -428,9 +438,8 @@ export class CanonicalRouter {
       }
     }
 
-    // 根据复杂度偏好排序（匹配的复杂度优先）
     if (intent.complexity) {
-      filtered = candidates.sort((a, b) => {
+      filtered = [...candidates].sort((a, b) => {
         const aMatch = a.agent.complexity === intent.complexity ? 10 : 0;
         const bMatch = b.agent.complexity === intent.complexity ? 10 : 0;
         return b.score + bMatch - (a.score + aMatch);
@@ -452,7 +461,6 @@ export class CanonicalRouter {
       return candidates;
     }
 
-    // 安全敏感时，提升 security-reviewer 的优先级
     return candidates
       .map((c) => {
         if (c.agent.name === 'security-reviewer') {
@@ -466,12 +474,22 @@ export class CanonicalRouter {
   /**
    * 构建匹配原因说明
    * @param {Object} selected
+   * @param {Object} intent
    * @returns {string}
    * @private
    */
-  _buildMatchReason(selected) {
+  _buildMatchReason(selected, intent) {
     const matchedKw = selected.matchedKeywords.join(', ');
-    return `匹配关键词: [${matchedKw}], 优先级: ${selected.agent.priority}`;
+    const parts = [`匹配关键词: [${matchedKw}]`, `优先级: ${selected.agent.priority}`];
+
+    if (intent.wms?.isWmsRelated) {
+      parts.push(`WMS服务: ${intent.wms.targetService}`);
+      if (intent.wms.businessDomain) {
+        parts.push(`业务域: ${intent.wms.businessDomain}`);
+      }
+    }
+
+    return parts.join(', ');
   }
 
   /**
@@ -484,7 +502,6 @@ export class CanonicalRouter {
     const defaultAgent = this.registry.getAgent(DEFAULT_AGENT.name);
 
     if (!defaultAgent) {
-      // 终极回退：返回 quest-designer 的信息（即使 registry 为空）
       return {
         agent: {
           name: DEFAULT_AGENT.name,
@@ -501,7 +518,8 @@ export class CanonicalRouter {
         score: 0,
         matchReason: `默认路由: ${reason}`,
         fallbackChain: [],
-        isDefault: true
+        isDefault: true,
+        routeId: this._createRouteId()
       };
     }
 
@@ -510,7 +528,8 @@ export class CanonicalRouter {
       score: 0,
       matchReason: `默认路由: ${reason}`,
       fallbackChain: this.registry.getFallbackChain(defaultAgent.name),
-      isDefault: true
+      isDefault: true,
+      routeId: this._createRouteId()
     };
   }
 
@@ -533,6 +552,44 @@ export class CanonicalRouter {
         triggerCount: a.triggerKeywords.length
       }))
     };
+  }
+
+  _createRouteId() {
+    return `route-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  _resolveAgentName(routeIdOrAgentName) {
+    if (!routeIdOrAgentName) {
+      return '';
+    }
+
+    if (this.registry.getAgent(routeIdOrAgentName)) {
+      return routeIdOrAgentName;
+    }
+
+    const historyEntry = this._routeHistory.find((entry) => entry.routeId === routeIdOrAgentName);
+    return historyEntry?.agent || '';
+  }
+
+  _markRouteOutcome(routeIdOrAgentName, outcome) {
+    const historyEntry = this._routeHistory.find((entry) => entry.routeId === routeIdOrAgentName);
+    if (historyEntry) {
+      historyEntry.outcome = outcome;
+    }
+  }
+
+  _recordAgentOutcome(agentName, success) {
+    const stats = this._agentStats.get(agentName) || {
+      hits: 0,
+      total: 0,
+      hitRate: DEFAULT_HIT_RATE
+    };
+    stats.total += 1;
+    if (success) {
+      stats.hits += 1;
+    }
+    stats.hitRate = stats.total > 0 ? stats.hits / stats.total : DEFAULT_HIT_RATE;
+    this._agentStats.set(agentName, stats);
   }
 }
 

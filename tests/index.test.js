@@ -51,7 +51,8 @@ import {
   runUpdate,
   runUninstall,
   runDocs,
-  runRoute
+  runRoute,
+  runWmsAuto
 } from '../src/index.js';
 import { install, uninstall } from '../src/installer.js';
 import {
@@ -252,6 +253,136 @@ describe('index.js', () => {
       await runRoute('design system', {});
       const output = console.log.mock.calls.flat().join(' ');
       expect(output).toBeTruthy();
+    });
+  });
+
+  describe('runWmsAuto', () => {
+    it('should delegate to injected orchestrator and return state', async () => {
+      const run = vi.fn().mockResolvedValue({
+        status: 'completed',
+        completedPhases: ['discover', 'reason']
+      });
+      const intentMatcher = {
+        analyze: vi.fn().mockReturnValue({
+          isWmsRelated: true,
+          targetService: 'outbound',
+          businessDomain: '波次',
+          confidence: 90,
+          codeLocations: {
+            controllers: ['WaveController'],
+            services: ['WaveServiceImpl'],
+            entities: ['WaveMaster']
+          }
+        })
+      };
+
+      const result = await runWmsAuto('improve orchestration', {
+        json: true,
+        presentQuestMap: true,
+        orchestrator: { run },
+        intentMatcher
+      });
+
+      expect(intentMatcher.analyze).toHaveBeenCalledWith('improve orchestration');
+      expect(run).toHaveBeenCalledWith(
+        'improve orchestration',
+        expect.objectContaining({
+          mode: 'plan',
+          questMapApproved: false,
+          questMapPresented: true,
+          source: 'src/index',
+          wmsContext: expect.objectContaining({
+            targetService: 'outbound',
+            businessDomain: '波次',
+            confidence: 90
+          })
+        })
+      );
+      expect(result.status).toBe('completed');
+      const output = console.log.mock.calls.flat().join(' ');
+      expect(output).toContain('completed');
+    });
+
+    it('should forward run mode approval and presentation options to runtime', async () => {
+      const run = vi.fn().mockResolvedValue({
+        status: 'completed',
+        completedPhases: ['discover', 'reason', 'execute', 'verify', 'commit', 'learn']
+      });
+      const intentMatcher = {
+        analyze: vi.fn()
+      };
+
+      await runWmsAuto('execute orchestration', {
+        run: true,
+        approveQuestMap: true,
+        presentQuestMap: true,
+        orchestrator: { run },
+        intentMatcher,
+        wmsContext: {
+          isWmsRelated: true,
+          targetService: 'inside',
+          businessDomain: '盘点',
+          confidence: 88,
+          codeLocations: {
+            controllers: ['CountMasterController'],
+            services: ['CountMasterServiceImpl'],
+            entities: ['CountMaster']
+          }
+        }
+      });
+
+      expect(intentMatcher.analyze).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledWith(
+        'execute orchestration',
+        expect.objectContaining({
+          mode: 'run',
+          questMapApproved: true,
+          questMapPresented: true,
+          source: 'src/index',
+          wmsContext: expect.objectContaining({
+            targetService: 'inside',
+            businessDomain: '盘点'
+          })
+        })
+      );
+    });
+
+    it('should preserve explicit non-WMS context when forwarding to runtime', async () => {
+      const run = vi.fn().mockResolvedValue({
+        status: 'blocked',
+        currentPhase: 'execute',
+        blockers: []
+      });
+      const intentMatcher = {
+        analyze: vi.fn()
+      };
+
+      await runWmsAuto('execute orchestration', {
+        run: true,
+        approveQuestMap: true,
+        presentQuestMap: true,
+        orchestrator: { run },
+        intentMatcher,
+        wmsContext: {
+          isWmsRelated: false,
+          confidence: 0
+        }
+      });
+
+      expect(intentMatcher.analyze).not.toHaveBeenCalled();
+      expect(run).toHaveBeenCalledWith(
+        'execute orchestration',
+        expect.objectContaining({
+          mode: 'run',
+          questMapApproved: true,
+          questMapPresented: true,
+          source: 'src/index',
+          wmsContext: {
+            isWmsRelated: false,
+            confidence: 0
+          }
+        })
+      );
     });
   });
 });

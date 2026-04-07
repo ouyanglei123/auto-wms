@@ -157,7 +157,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "#!/bin/bash\n# Quality gate: check for uncommitted changes before allowing task completion\ninput=$(cat)\n\nif git rev-parse --git-dir > /dev/null 2>&1; then\n  uncommitted=$(git status --porcelain 2>/dev/null | head -20)\n  \n  if [ -n \"$uncommitted\" ]; then\n    echo '[Hook] QUALITY GATE: Uncommitted changes detected!' >&2\n    echo '[Hook] Files with pending changes:' >&2\n    echo \"$uncommitted\" | head -10 >&2\n    echo '[Hook] Commit or stash changes before marking task as completed' >&2\n    exit 2\n  fi\nfi\n\necho \"$input\""
+            "command": "#!/bin/bash\ninput=$(cat)\n\nif git rev-parse --git-dir > /dev/null 2>&1; then\n  uncommitted=$(git status --porcelain 2>/dev/null | head -20)\n  \n  if [ -n \"$uncommitted\" ]; then\n    echo '[Hook] QUALITY GATE: Uncommitted changes detected!' >&2\n    echo '[Hook] Files with pending changes:' >&2\n    echo \"$uncommitted\" | head -10 >&2\n    echo '[Hook] Commit or stash changes before marking task as completed' >&2\n    exit 2\n  fi\nfi\n\nif command -v auto >/dev/null 2>&1; then\n  printf '%s' \"$input\" | auto internal:learn-task-event >/dev/null 2>&1 || true\nelif [ -f \"./bin/cli.js\" ] && command -v node >/dev/null 2>&1; then\n  printf '%s' \"$input\" | node \"./bin/cli.js\" \"internal:learn-task-event\" >/dev/null 2>&1 || true\nfi\n\necho \"$input\""
           }
         ],
         "description": "Quality gate - block task completion if uncommitted changes exist (exit 2 = reject)"

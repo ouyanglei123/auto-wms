@@ -4,13 +4,18 @@
  * 导出：
  * - McpClient: MCP 客户端
  * - McpServer: MCP 服务端
- * - toolRegistry: 工具注册表
+ * - McpToolRegistry: 工具注册表类
+ * - toolRegistry: 工具注册表单例
  */
-export { McpClient, toolRegistry } from './mcp-client.js';
-export { McpServer, createMcpServer } from './mcp-server.js';
+import McpClient, { McpToolRegistry, toolRegistry } from './mcp-client.js';
+import McpServer, { createMcpServer } from './mcp-server.js';
+
+export { McpClient, McpServer, McpToolRegistry, createMcpServer, toolRegistry };
 
 export default {
-  McpClient: require('./mcp-client.js').McpClient,
-  toolRegistry: require('./mcp-client.js').toolRegistry,
-  McpServer: require('./mcp-server.js').McpServer
+  McpClient,
+  McpServer,
+  McpToolRegistry,
+  createMcpServer,
+  toolRegistry
 };

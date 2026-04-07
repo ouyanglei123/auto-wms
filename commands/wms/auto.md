@@ -155,7 +155,7 @@ Glob("$HOME/.claude/hooks/*.json") → Read，统计 hook 类型数量
 
 IF REPO_MAP.md 已加载 → 跳过 src/ 扫描
 ELSE：
-  Glob("src/**/*.{java,ts,tsx,js,jsx,py,go}") → 仅路径列表
+Glob("src/**/*.{java,ts,tsx,js,jsx,py,go}") → 仅路径列表
 ```
 
 ### 1.3a 写入能力快照（1.1-1.3 执行后）
@@ -204,9 +204,9 @@ const routeResult = await router.route(userIntent, {
 ```
 
 🔒 GATE: PHASE 1 → 2
-  ✓ 报告已输出 + 能力清单已收集 + Router 推荐（可选）
-  → 调用 Agent({ subagent_type: "quest-designer" })
-  ⛔ 禁止: 编辑代码、跳到 PHASE 3
+✓ 报告已输出 + 能力清单已收集 + Router 推荐（可选）
+→ 调用 Agent({ subagent_type: "quest-designer" })
+⛔ 禁止: 编辑代码、跳到 PHASE 3
 ```
 
 ---

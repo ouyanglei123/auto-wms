@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
 import os from 'os';
 import fs from 'fs-extra';
@@ -138,6 +138,31 @@ describe('KnowledgeSteward', () => {
 
       const content = await fs.readFile(result.filePath, 'utf-8');
       expect(content).toContain('这个 prompt 模板让输出质量翻倍');
+    });
+
+    it('should not auto commit by default', async () => {
+      const gitCommitSpy = vi.spyOn(steward, '_gitCommit').mockResolvedValue('mock-hash');
+
+      const result = await steward.save({
+        content: '默认不应自动提交'
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.gitHash).toBe('');
+      expect(gitCommitSpy).not.toHaveBeenCalled();
+    });
+
+    it('should auto commit only when explicitly enabled', async () => {
+      const gitCommitSpy = vi.spyOn(steward, '_gitCommit').mockResolvedValue('mock-hash');
+
+      const result = await steward.save({
+        content: '显式开启自动提交',
+        gitCommit: true
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.gitHash).toBe('mock-hash');
+      expect(gitCommitSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should reject empty content', async () => {

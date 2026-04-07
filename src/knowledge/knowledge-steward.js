@@ -4,7 +4,7 @@
  * 核心功能：
  * - 智能分类：根据内容关键词自动路由到对应知识文件
  * - Markdown 追加：以结构化格式追加到对应 .md 文件
- * - Git 自动提交：保存后自动 git commit
+ * - 可选 Git 提交：显式开启后自动 git commit
  */
 import path from 'path';
 import fs from 'fs-extra';
@@ -17,7 +17,7 @@ import { classifyContent, CATEGORIES, getCategoryByName } from './categories.js'
  * @property {string} content - 要保存的内容
  * @property {string} [category] - 指定分类（可选，自动推断时忽略）
  * @property {string[]} [tags] - 标签列表
- * @property {boolean} [gitCommit=true] - 是否自动 git commit
+ * @property {boolean} [gitCommit=false] - 是否自动 git commit
  * @property {string} [projectDir] - 项目根目录（默认 process.cwd()）
  */
 
@@ -139,7 +139,7 @@ class KnowledgeSteward {
    * @param {SaveOptions} options
    * @returns {Promise<SaveResult>}
    */
-  async save({ content, category, tags, gitCommit = true }) {
+  async save({ content, category, tags, gitCommit = false }) {
     if (!content || !content.trim()) {
       return {
         success: false,
