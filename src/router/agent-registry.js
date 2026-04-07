@@ -224,8 +224,10 @@ export class AgentRegistry {
     this.logger = logger;
     this._enableHealthCheck = options.enableHealthCheck ?? false;
     this._healthCheckInterval = options.healthCheckInterval ?? 60000;
+    this._enableCustomAgentsInRouting = options.enableCustomAgentsInRouting ?? false;
     this._healthCheckTimer = null;
     this._agentHealth = new Map(); // Agent 健康状态
+    this._initialized = false;
   }
 
   /**
@@ -233,6 +235,10 @@ export class AgentRegistry {
    * @returns {Promise<number>} 注册的 Agent 数量
    */
   async initialize() {
+    if (this._initialized) {
+      return this.agents.size;
+    }
+
     // 加载内置 Agent（按依赖顺序）
     const sortedBuiltIn = this._sortByDependencies(BUILT_IN_AGENTS);
     for (const manifest of sortedBuiltIn) {
@@ -248,6 +254,7 @@ export class AgentRegistry {
       this._startHealthCheck();
     }
 
+    this._initialized = true;
     this.logger.info(`Agent 注册表初始化完成：${this.agents.size} 个 Agent`);
     return this.agents.size;
   }
@@ -496,6 +503,10 @@ export class AgentRegistry {
 
     for (const agent of this.agents.values()) {
       if (agent.state !== AGENT_STATES.ACTIVE) {
+        continue;
+      }
+
+      if (agent.source === 'custom' && !this._enableCustomAgentsInRouting) {
         continue;
       }
 

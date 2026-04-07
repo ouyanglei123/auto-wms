@@ -17,10 +17,11 @@ describe('gate-checks', () => {
     expect(getValueByPath(state, 'artifacts.reason.questMap')).toBeUndefined();
   });
 
-  it('treats false and zero as valid required values', () => {
+  it('treats false and zero as valid required values while rejecting blank strings', () => {
     expect(hasRequiredValue(false)).toBe(true);
     expect(hasRequiredValue(0)).toBe(true);
     expect(hasRequiredValue('')).toBe(false);
+    expect(hasRequiredValue('   ')).toBe(false);
     expect(hasRequiredValue(undefined)).toBe(false);
   });
 
@@ -46,5 +47,75 @@ describe('gate-checks', () => {
     state.approvals.questMapPresented = true;
 
     expect(() => assertExecutionWriteGate(state)).not.toThrow();
+  });
+
+  it('blocks execute writes when quest designer invocation is not explicitly true', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.discover.healthReport = { status: 'green' };
+    state.artifacts.reason.questMap = '# quest map';
+    state.artifacts.reason.questDesigner = { invoked: false, agent: 'quest-designer' };
+    state.approvals.questMapPresented = true;
+    state.approvals.questMapApproved = true;
+
+    expect(() => assertExecutionWriteGate(state)).toThrowError(OrchestrationBlockedError);
+    expect(() => assertExecutionWriteGate(state)).toThrow(/questDesigner\.invoked/);
+  });
+
+  it('blocks verify phase when execute artifact has no real execution evidence', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.discover.healthReport = { status: 'green' };
+    state.artifacts.reason.questMap = '# quest map';
+    state.artifacts.reason.questDesigner = { invoked: true, agent: 'quest-designer' };
+    state.artifacts.execute = { executionLog: { steps: [] } };
+
+    expect(() => assertPhaseCanStart(state, 'verify')).toThrowError(OrchestrationBlockedError);
+    expect(() => assertPhaseCanStart(state, 'verify')).toThrow(/executionLog\.steps/);
+  });
+
+  it('allows verify phase when execute artifact is explicitly skipped with a reason', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.discover.healthReport = { status: 'green' };
+    state.artifacts.reason.questMap = '# quest map';
+    state.artifacts.reason.questDesigner = { invoked: true, agent: 'quest-designer' };
+    state.artifacts.execute = { skipped: true, reason: 'no-op change' };
+
+    expect(() => assertPhaseCanStart(state, 'verify')).not.toThrow();
+  });
+
+  it('blocks commit phase when verify artifact has no checks and no explicit skip', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.verify = {
+      verification: {
+        passed: true,
+        checks: []
+      }
+    };
+
+    expect(() => assertPhaseCanStart(state, 'commit')).toThrowError(OrchestrationBlockedError);
+    expect(() => assertPhaseCanStart(state, 'commit')).toThrow(/verification\.checks/);
+  });
+
+  it('allows commit phase when verify artifact is explicitly skipped with a reason', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.verify = {
+      verification: {
+        skipped: true,
+        reason: 'verification not required'
+      }
+    };
+
+    expect(() => assertPhaseCanStart(state, 'commit')).not.toThrow();
+  });
+
+  it('blocks commit phase when skipped verify artifact omits a reason', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.verify = {
+      verification: {
+        skipped: true
+      }
+    };
+
+    expect(() => assertPhaseCanStart(state, 'commit')).toThrowError(OrchestrationBlockedError);
+    expect(() => assertPhaseCanStart(state, 'commit')).toThrow(/explicit skip reason/);
   });
 });

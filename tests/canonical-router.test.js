@@ -63,6 +63,58 @@ This is not an agent.
       expect(registry.getAgent('notes')).toBeNull();
     });
 
+    it('should keep custom agents out of routing candidates by default', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'security-helper.md'),
+        `---
+name: security-helper
+description: Custom security helper
+tools: Read, Glob
+tags: [security, 漏洞]
+---
+
+# Security Helper
+`,
+        'utf-8'
+      );
+
+      await registry.initialize();
+
+      const customAgent = registry.getAgent('security-helper');
+      const candidates = registry.findCandidates(['security', '漏洞']);
+
+      expect(customAgent).toBeDefined();
+      expect(customAgent.source).toBe('custom');
+      expect(candidates.some((candidate) => candidate.agent.name === 'security-helper')).toBe(
+        false
+      );
+    });
+
+    it('should allow custom agents into routing candidates when explicitly enabled', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'security-helper.md'),
+        `---
+name: security-helper
+description: Custom security helper
+tools: Read, Glob
+tags: [security, helper]
+---
+
+# Security Helper
+`,
+        'utf-8'
+      );
+      registry = new AgentRegistry(tempDir, { enableCustomAgentsInRouting: true });
+
+      await registry.initialize();
+
+      const candidates = registry.findCandidates(['security-helper']);
+
+      expect(candidates.some((candidate) => candidate.agent.name === 'security-helper')).toBe(true);
+    });
+
     it('should reject custom agents with unknown manifest keys', async () => {
       await fs.ensureDir(path.join(tempDir, 'agents'));
       await fs.writeFile(
@@ -384,6 +436,67 @@ describe('CanonicalRouter', () => {
 
       expect(result.agent.name).toBe('security-reviewer');
       expect(result.score).toBeGreaterThan(0);
+    });
+
+    it('should ignore custom agents in default routing unless explicitly enabled', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'security-helper.md'),
+        `---
+name: security-helper
+description: Custom security helper
+tools: Read, Glob
+tags: [security, 漏洞]
+---
+
+# Security Helper
+`,
+        'utf-8'
+      );
+
+      const registry = new AgentRegistry(tempDir);
+      router = new CanonicalRouter(registry);
+      await router.initialize();
+
+      const result = await router.route('检查安全漏洞');
+
+      expect(result.agent.name).toBe('security-reviewer');
+    });
+
+    it('should allow custom agents to influence routing when explicitly enabled', async () => {
+      await fs.ensureDir(path.join(tempDir, 'agents'));
+      await fs.writeFile(
+        path.join(tempDir, 'agents', 'novel-helper.md'),
+        `---
+name: novel-helper
+description: Custom routing helper
+tools: Read, Glob
+tags: [novel-helper]
+---
+
+# Novel Helper
+`,
+        'utf-8'
+      );
+
+      const registry = new AgentRegistry(tempDir, { enableCustomAgentsInRouting: true });
+      router = new CanonicalRouter(registry);
+      await router.initialize();
+
+      const result = await router.route('novel-helper');
+
+      expect(result.agent.name).toBe('novel-helper');
+    });
+
+    it('should preserve externally initialized registry state', async () => {
+      const registry = new AgentRegistry(tempDir);
+      await registry.initialize();
+      expect(registry.unregisterAgent('quest-designer', { force: true })).toBe(true);
+
+      router = new CanonicalRouter(registry);
+      await router.initialize();
+
+      expect(router.registry.getAgent('quest-designer')).toBeNull();
     });
 
     it('should route to build-error-resolver for build errors', async () => {
