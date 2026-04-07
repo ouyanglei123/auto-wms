@@ -8,8 +8,8 @@ const PHASE_REQUIREMENTS = {
     'artifacts.reason.questDesigner.invoked'
   ],
   verify: ['artifacts.execute'],
-  deliver: ['artifacts.verify'],
-  learn: ['artifacts.deliver']
+  commit: ['artifacts.verify'],
+  learn: ['artifacts.commit']
 };
 
 const EXECUTION_WRITE_GATE = [

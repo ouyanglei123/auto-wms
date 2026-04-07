@@ -30,8 +30,19 @@ function createDefaultExecutors() {
     }),
     execute: async () => ({ executionLog: { steps: [] } }),
     verify: async () => ({ verification: { passed: true, checks: [] } }),
-    deliver: async () => ({ delivery: { summary: 'pending' } }),
+    commit: async () => ({ summary: 'pending' }),
     learn: async () => ({ learning: { updated: false } })
+  };
+}
+
+function normalizeExecutors(executors = {}) {
+  if (executors.commit || !executors.deliver) {
+    return executors;
+  }
+
+  return {
+    ...executors,
+    commit: executors.deliver
   };
 }
 
@@ -39,7 +50,7 @@ export class WmsAutoOrchestrator {
   constructor(options = {}) {
     this.executors = {
       ...createDefaultExecutors(),
-      ...(options.executors ?? {})
+      ...normalizeExecutors(options.executors)
     };
   }
 

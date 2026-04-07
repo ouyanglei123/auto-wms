@@ -33,10 +33,8 @@ function createExecutors(overrides = {}) {
         checks: ['tests']
       }
     }),
-    deliver: vi.fn().mockResolvedValue({
-      delivery: {
-        summary: 'done'
-      }
+    commit: vi.fn().mockResolvedValue({
+      summary: 'done'
     }),
     learn: vi.fn().mockResolvedValue({
       learning: {
@@ -165,10 +163,30 @@ describe('WmsAutoOrchestrator', () => {
       'reason',
       'execute',
       'verify',
-      'deliver',
+      'commit',
       'learn'
     ]);
     expect(state.artifacts.verify.verification.passed).toBe(true);
+    expect(state.artifacts.commit.summary).toBe('done');
+    expect(executors.commit).toHaveBeenCalledOnce();
     expect(executors.learn).toHaveBeenCalledOnce();
+  });
+
+  it('maps legacy deliver executor overrides to commit phase', async () => {
+    const deliver = vi.fn().mockResolvedValue({ summary: 'legacy done' });
+    const orchestrator = new WmsAutoOrchestrator({
+      executors: createExecutors({ commit: undefined, deliver })
+    });
+
+    const state = await orchestrator.run('improve orchestration', {
+      mode: ORCHESTRATION_MODE.RUN,
+      questMapApproved: true,
+      questMapPresented: true,
+      source: 'test'
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.COMPLETED);
+    expect(state.artifacts.commit.summary).toBe('legacy done');
+    expect(deliver).toHaveBeenCalledOnce();
   });
 });

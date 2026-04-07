@@ -11,7 +11,7 @@ export const PHASE_STATUS = {
   FAILED: 'failed'
 };
 
-export const ORCHESTRATION_PHASES = ['discover', 'reason', 'execute', 'verify', 'deliver', 'learn'];
+export const ORCHESTRATION_PHASES = ['discover', 'reason', 'execute', 'verify', 'commit', 'learn'];
 
 export function createInitialOrchestrationState(intent, options = {}) {
   return {
@@ -32,7 +32,7 @@ export function createInitialOrchestrationState(intent, options = {}) {
       reason: {},
       execute: {},
       verify: {},
-      deliver: {},
+      commit: {},
       learn: {}
     },
     metadata: {

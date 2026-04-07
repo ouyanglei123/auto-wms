@@ -286,7 +286,7 @@ describe('index.js', () => {
     it('should forward run mode approval and presentation options to runtime', async () => {
       const run = vi.fn().mockResolvedValue({
         status: 'completed',
-        completedPhases: ['discover', 'reason', 'execute', 'verify', 'deliver', 'learn']
+        completedPhases: ['discover', 'reason', 'execute', 'verify', 'commit', 'learn']
       });
 
       await runWmsAuto('execute orchestration', {
