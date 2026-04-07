@@ -262,20 +262,40 @@ describe('index.js', () => {
         status: 'completed',
         completedPhases: ['discover', 'reason']
       });
+      const intentMatcher = {
+        analyze: vi.fn().mockReturnValue({
+          isWmsRelated: true,
+          targetService: 'outbound',
+          businessDomain: '波次',
+          confidence: 90,
+          codeLocations: {
+            controllers: ['WaveController'],
+            services: ['WaveServiceImpl'],
+            entities: ['WaveMaster']
+          }
+        })
+      };
 
       const result = await runWmsAuto('improve orchestration', {
         json: true,
         presentQuestMap: true,
-        orchestrator: { run }
+        orchestrator: { run },
+        intentMatcher
       });
 
+      expect(intentMatcher.analyze).toHaveBeenCalledWith('improve orchestration');
       expect(run).toHaveBeenCalledWith(
         'improve orchestration',
         expect.objectContaining({
           mode: 'plan',
           questMapApproved: false,
           questMapPresented: true,
-          source: 'src/index'
+          source: 'src/index',
+          wmsContext: expect.objectContaining({
+            targetService: 'outbound',
+            businessDomain: '波次',
+            confidence: 90
+          })
         })
       );
       expect(result.status).toBe('completed');
@@ -288,21 +308,41 @@ describe('index.js', () => {
         status: 'completed',
         completedPhases: ['discover', 'reason', 'execute', 'verify', 'commit', 'learn']
       });
+      const intentMatcher = {
+        analyze: vi.fn()
+      };
 
       await runWmsAuto('execute orchestration', {
         run: true,
         approveQuestMap: true,
         presentQuestMap: true,
-        orchestrator: { run }
+        orchestrator: { run },
+        intentMatcher,
+        wmsContext: {
+          isWmsRelated: true,
+          targetService: 'inside',
+          businessDomain: '盘点',
+          confidence: 88,
+          codeLocations: {
+            controllers: ['CountMasterController'],
+            services: ['CountMasterServiceImpl'],
+            entities: ['CountMaster']
+          }
+        }
       });
 
+      expect(intentMatcher.analyze).not.toHaveBeenCalled();
       expect(run).toHaveBeenCalledWith(
         'execute orchestration',
         expect.objectContaining({
           mode: 'run',
           questMapApproved: true,
           questMapPresented: true,
-          source: 'src/index'
+          source: 'src/index',
+          wmsContext: expect.objectContaining({
+            targetService: 'inside',
+            businessDomain: '盘点'
+          })
         })
       );
     });

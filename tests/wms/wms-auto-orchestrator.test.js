@@ -52,13 +52,106 @@ describe('WmsAutoOrchestrator', () => {
 
     const state = await orchestrator.run('improve orchestration', {
       mode: ORCHESTRATION_MODE.PLAN_ONLY,
-      source: 'test'
+      source: 'test',
+      wmsContext: {
+        isWmsRelated: true,
+        targetService: 'outbound',
+        businessDomain: '波次',
+        confidence: 92,
+        codeLocations: {
+          controllers: ['WaveController'],
+          services: ['WaveServiceImpl'],
+          entities: ['WaveMaster']
+        }
+      }
     });
 
     expect(state.status).toBe(PHASE_STATUS.COMPLETED);
     expect(state.completedPhases).toEqual(['discover', 'reason']);
     expect(executors.execute).not.toHaveBeenCalled();
+    expect(state.artifacts.discover.wmsContext).toMatchObject({
+      targetService: 'outbound',
+      businessDomain: '波次'
+    });
     expect(state.artifacts.reason.questMap).toContain('quest map');
+  });
+
+  it('uses default discover and reason executors to preserve WMS context', async () => {
+    const orchestrator = new WmsAutoOrchestrator();
+
+    const state = await orchestrator.run('排查出库波次异常', {
+      mode: ORCHESTRATION_MODE.PLAN_ONLY,
+      source: 'test',
+      wmsContext: {
+        isWmsRelated: true,
+        targetService: 'outbound',
+        businessDomain: '波次',
+        confidence: 91,
+        codeLocations: {
+          controllers: ['WaveController'],
+          services: ['WaveServiceImpl'],
+          entities: ['WaveMaster']
+        }
+      }
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.COMPLETED);
+    expect(state.artifacts.discover.wmsContext).toMatchObject({
+      targetService: 'outbound',
+      businessDomain: '波次'
+    });
+    expect(state.artifacts.reason.wmsContext).toMatchObject({
+      targetService: 'outbound',
+      businessDomain: '波次'
+    });
+    expect(state.artifacts.reason.questMap).toContain('# Quest Map');
+    expect(state.artifacts.reason.questMap).toContain('Target Service: outbound');
+    expect(state.artifacts.reason.questMap).toContain('Business Domain: 波次');
+    expect(state.artifacts.reason.questMap).toContain('Confidence: 91%');
+    expect(state.artifacts.reason.contracts).toEqual([
+      'SERVICE:outbound',
+      'DOMAIN:波次',
+      'CONFIDENCE:91',
+      'CONTROLLERS:WaveController',
+      'SERVICES:WaveServiceImpl',
+      'ENTITIES:WaveMaster'
+    ]);
+  });
+
+  it('uses a fallback contract when WMS context is unavailable', async () => {
+    const orchestrator = new WmsAutoOrchestrator();
+
+    const state = await orchestrator.run('整理执行链路', {
+      mode: ORCHESTRATION_MODE.PLAN_ONLY,
+      source: 'test',
+      wmsContext: {
+        isWmsRelated: false,
+        confidence: 0
+      }
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.COMPLETED);
+    expect(state.artifacts.reason.questMap).toContain('Quest Map is pending runtime integration.');
+    expect(state.artifacts.reason.contracts).toEqual([
+      'CONTRACT: collect WMS context before execution'
+    ]);
+  });
+
+  it('uses a fallback contract when WMS context is missing', async () => {
+    const orchestrator = new WmsAutoOrchestrator();
+
+    const state = await orchestrator.run('整理执行链路', {
+      mode: ORCHESTRATION_MODE.PLAN_ONLY,
+      source: 'test'
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.COMPLETED);
+    expect(state.artifacts.discover.wmsContext).toBeNull();
+    expect(state.artifacts.reason.wmsContext).toBeNull();
+    expect(state.artifacts.reason.questMap).toContain('Quest Map is pending runtime integration.');
+    expect(state.artifacts.reason.contracts).toEqual([
+      'CONTRACT: collect WMS context before execution'
+    ]);
   });
 
   it('blocks plan mode when reason output omits quest designer metadata', async () => {
@@ -324,6 +417,45 @@ describe('WmsAutoOrchestrator', () => {
     expect(state.status).toBe(PHASE_STATUS.BLOCKED);
     expect(state.currentPhase).toBe('verify');
     expect(executors.execute).toHaveBeenCalledOnce();
+  });
+
+  it('blocks run mode when a custom executor returns a placeholder artifact', async () => {
+    const executors = createExecutors({
+      verify: vi.fn().mockResolvedValue({
+        artifact: {
+          __placeholder: true,
+          phase: 'verify',
+          verification: {
+            passed: true,
+            checks: ['tests']
+          },
+          reason: 'custom verify executor returned a placeholder artifact'
+        },
+        meta: {
+          source: 'custom'
+        }
+      })
+    });
+    const orchestrator = new WmsAutoOrchestrator({ executors });
+
+    const state = await orchestrator.run('improve orchestration', {
+      mode: ORCHESTRATION_MODE.RUN,
+      questMapApproved: true,
+      questMapPresented: true,
+      source: 'test'
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.BLOCKED);
+    expect(state.currentPhase).toBe('verify');
+    expect(executors.execute).toHaveBeenCalledOnce();
+    expect(executors.commit).not.toHaveBeenCalled();
+    expect(state.blockers[0]).toMatchObject({
+      code: 'ORCHESTRATION_BLOCKED',
+      details: {
+        phase: 'verify',
+        reason: 'placeholder-artifact'
+      }
+    });
   });
 
   it('blocks execute phase when execute output has no real evidence', async () => {

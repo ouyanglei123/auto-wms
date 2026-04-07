@@ -118,4 +118,35 @@ describe('gate-checks', () => {
     expect(() => assertPhaseCanStart(state, 'commit')).toThrowError(OrchestrationBlockedError);
     expect(() => assertPhaseCanStart(state, 'commit')).toThrow(/explicit skip reason/);
   });
+
+  it('blocks learn phase when commit artifact has no summary and no explicit skip', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.commit = {
+      status: 'pending'
+    };
+
+    expect(() => assertPhaseCanStart(state, 'learn')).toThrowError(OrchestrationBlockedError);
+    expect(() => assertPhaseCanStart(state, 'learn')).toThrow(/artifacts\.commit\.summary/);
+  });
+
+  it('allows learn phase when commit artifact is explicitly skipped with a reason', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.commit = {
+      skipped: true,
+      reason: 'nothing to persist'
+    };
+
+    expect(() => assertPhaseCanStart(state, 'learn')).not.toThrow();
+  });
+
+  it('blocks learn phase when skipped commit artifact omits a usable reason', () => {
+    const state = createInitialOrchestrationState('test');
+    state.artifacts.commit = {
+      skipped: true,
+      reason: '   '
+    };
+
+    expect(() => assertPhaseCanStart(state, 'learn')).toThrowError(OrchestrationBlockedError);
+    expect(() => assertPhaseCanStart(state, 'learn')).toThrow(/explicit skip reason/);
+  });
 });

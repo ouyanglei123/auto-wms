@@ -10,6 +10,7 @@ import {
 import { getInstalledVersion, COMPONENTS, openBrowser } from './utils.js';
 import { logger } from './logger.js';
 import { DOCS_URL } from './config.js';
+import { WmsIntentMatcher } from './wms/wms-intent-matcher.js';
 import { ORCHESTRATION_MODE, WmsAutoOrchestrator } from './wms/runtime/index.js';
 
 /**
@@ -220,8 +221,11 @@ export async function runRoute(userIntent, options = {}) {
 
 export async function runWmsAuto(userIntent, options = {}) {
   const orchestrator = options.orchestrator ?? new WmsAutoOrchestrator();
+  const intentMatcher = options.intentMatcher ?? new WmsIntentMatcher();
+  const wmsContext = options.wmsContext ?? intentMatcher.analyze(userIntent);
   const runtimeOptions = {
     ...options.runtimeOptions,
+    wmsContext,
     mode: options.run ? ORCHESTRATION_MODE.RUN : ORCHESTRATION_MODE.PLAN_ONLY,
     questMapApproved: Boolean(options.approveQuestMap),
     questMapPresented: Boolean(options.presentQuestMap),

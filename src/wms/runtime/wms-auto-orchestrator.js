@@ -18,23 +18,78 @@ function createPlaceholderArtifact(phase, patch) {
   };
 }
 
+function normalizeCodeLocationList(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === 'string' && item.trim())
+    : [];
+}
+
+function buildDefaultContracts(wmsContext) {
+  if (!wmsContext?.isWmsRelated) {
+    return ['CONTRACT: collect WMS context before execution'];
+  }
+
+  const targetService = wmsContext.targetService ?? 'unknown-service';
+  const businessDomain = wmsContext.businessDomain ?? '通用';
+  const confidence = wmsContext.confidence ?? 0;
+  const controllers = normalizeCodeLocationList(wmsContext.codeLocations?.controllers);
+  const services = normalizeCodeLocationList(wmsContext.codeLocations?.services);
+  const entities = normalizeCodeLocationList(wmsContext.codeLocations?.entities);
+
+  return [
+    `SERVICE:${targetService}`,
+    `DOMAIN:${businessDomain}`,
+    `CONFIDENCE:${confidence}`,
+    `CONTROLLERS:${controllers.join(', ') || 'N/A'}`,
+    `SERVICES:${services.join(', ') || 'N/A'}`,
+    `ENTITIES:${entities.join(', ') || 'N/A'}`
+  ];
+}
+
+function buildDefaultQuestMap(wmsContext) {
+  if (!wmsContext?.isWmsRelated) {
+    return 'Quest Map is pending runtime integration.';
+  }
+
+  const targetService = wmsContext.targetService ?? 'unknown-service';
+  const businessDomain = wmsContext.businessDomain ?? '通用';
+  const confidence = wmsContext.confidence ?? 0;
+  const controllers = normalizeCodeLocationList(wmsContext.codeLocations?.controllers);
+  const services = normalizeCodeLocationList(wmsContext.codeLocations?.services);
+  const entities = normalizeCodeLocationList(wmsContext.codeLocations?.entities);
+
+  return [
+    '# Quest Map',
+    `- Target Service: ${targetService}`,
+    `- Business Domain: ${businessDomain}`,
+    `- Confidence: ${confidence}%`,
+    `- Controllers: ${controllers.join(', ') || 'N/A'}`,
+    `- Services: ${services.join(', ') || 'N/A'}`,
+    `- Entities: ${entities.join(', ') || 'N/A'}`,
+    '- Objective: trace the identified WMS business path before any write phase.',
+    '- Verification: confirm the mapped controller/service/entity chain matches the intended business flow.'
+  ].join('\n');
+}
+
 function createDefaultExecutors() {
   return {
-    discover: async () => ({
+    discover: async (state) => ({
       healthReport: {
         status: 'yellow',
         questDesignerAvailable: true,
         hooksEnabled: true
-      }
+      },
+      wmsContext: state.artifacts.discover.wmsContext ?? null
     }),
-    reason: async () => ({
+    reason: async (state) => ({
       questDesigner: {
         invoked: true,
         agent: 'quest-designer',
         generatedAt: new Date().toISOString()
       },
-      questMap: 'Quest Map is pending runtime integration.',
-      contracts: []
+      questMap: buildDefaultQuestMap(state.artifacts.discover.wmsContext),
+      wmsContext: state.artifacts.discover.wmsContext ?? null,
+      contracts: buildDefaultContracts(state.artifacts.discover.wmsContext)
     }),
     execute: async () =>
       createPlaceholderArtifact('execute', {

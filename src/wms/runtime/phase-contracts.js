@@ -28,7 +28,9 @@ export function createInitialOrchestrationState(intent, options = {}) {
       questMapPresented: Boolean(options.questMapPresented)
     },
     artifacts: {
-      discover: {},
+      discover: {
+        wmsContext: options.wmsContext ?? null
+      },
       reason: {},
       execute: {},
       verify: {},
