@@ -286,13 +286,7 @@ export class CanonicalRouter {
    * @param {string} routeIdOrAgentName - routeId 或 Agent 名称
    */
   reportSuccess(routeIdOrAgentName) {
-    const agentName = this._resolveAgentName(routeIdOrAgentName);
-    if (!agentName) {
-      return;
-    }
-
-    this._markRouteOutcome(routeIdOrAgentName, 'success');
-    this._recordAgentOutcome(agentName, true);
+    this._recordFeedback(routeIdOrAgentName, 'success');
   }
 
   /**
@@ -300,13 +294,7 @@ export class CanonicalRouter {
    * @param {string} routeIdOrAgentName - routeId 或 Agent 名称
    */
   reportFailure(routeIdOrAgentName) {
-    const agentName = this._resolveAgentName(routeIdOrAgentName);
-    if (!agentName) {
-      return;
-    }
-
-    this._markRouteOutcome(routeIdOrAgentName, 'failure');
-    this._recordAgentOutcome(agentName, false);
+    this._recordFeedback(routeIdOrAgentName, 'failure');
   }
 
   /**
@@ -567,15 +555,32 @@ export class CanonicalRouter {
       return routeIdOrAgentName;
     }
 
-    const historyEntry = this._routeHistory.find((entry) => entry.routeId === routeIdOrAgentName);
+    const historyEntry = this._findHistoryEntry(routeIdOrAgentName);
     return historyEntry?.agent || '';
   }
 
-  _markRouteOutcome(routeIdOrAgentName, outcome) {
-    const historyEntry = this._routeHistory.find((entry) => entry.routeId === routeIdOrAgentName);
+  _recordFeedback(routeIdOrAgentName, outcome) {
+    const historyEntry = this._findHistoryEntry(routeIdOrAgentName);
     if (historyEntry) {
+      if (historyEntry.outcome !== 'proposed') {
+        return;
+      }
+
       historyEntry.outcome = outcome;
+      this._recordAgentOutcome(historyEntry.agent, outcome === 'success');
+      return;
     }
+
+    const agentName = this._resolveAgentName(routeIdOrAgentName);
+    if (!agentName) {
+      return;
+    }
+
+    this._recordAgentOutcome(agentName, outcome === 'success');
+  }
+
+  _findHistoryEntry(routeId) {
+    return this._routeHistory.find((entry) => entry.routeId === routeId);
   }
 
   _recordAgentOutcome(agentName, success) {

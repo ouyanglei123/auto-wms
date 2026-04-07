@@ -611,6 +611,65 @@ tags: [novel-helper]
       expect(history[0].outcome).toBe('failure');
     });
 
+    it('should not double-count stats when reportSuccess is called twice for the same routeId', async () => {
+      const result = await router.route('编写测试用例');
+      router.reportSuccess(result.routeId);
+      router.reportSuccess(result.routeId);
+
+      const stats = router.getAgentStats().get(result.agent.name);
+      const history = router.getHistory();
+
+      expect(stats).toEqual({ hits: 1, total: 1, hitRate: 1 });
+      expect(history[0].outcome).toBe('success');
+    });
+
+    it('should keep the first terminal outcome when conflicting feedback arrives for the same routeId', async () => {
+      const result = await router.route('编写测试用例');
+      router.reportSuccess(result.routeId);
+      router.reportFailure(result.routeId);
+
+      const stats = router.getAgentStats().get(result.agent.name);
+      const history = router.getHistory();
+
+      expect(stats).toEqual({ hits: 1, total: 1, hitRate: 1 });
+      expect(history[0].outcome).toBe('success');
+    });
+
+    it('should not double-count stats when reportFailure is called twice for the same routeId', async () => {
+      const result = await router.route('编写测试用例');
+      router.reportFailure(result.routeId);
+      router.reportFailure(result.routeId);
+
+      const stats = router.getAgentStats().get(result.agent.name);
+      const history = router.getHistory();
+
+      expect(stats).toEqual({ hits: 0, total: 1, hitRate: 0 });
+      expect(history[0].outcome).toBe('failure');
+    });
+
+    it('should keep the first failure outcome when success feedback arrives later for the same routeId', async () => {
+      const result = await router.route('编写测试用例');
+      router.reportFailure(result.routeId);
+      router.reportSuccess(result.routeId);
+
+      const stats = router.getAgentStats().get(result.agent.name);
+      const history = router.getHistory();
+
+      expect(stats).toEqual({ hits: 0, total: 1, hitRate: 0 });
+      expect(history[0].outcome).toBe('failure');
+    });
+
+    it('should accumulate stats when feedback is reported directly by agent name', () => {
+      router.reportSuccess('code-reviewer');
+      router.reportSuccess('code-reviewer');
+
+      expect(router.getAgentStats().get('code-reviewer')).toEqual({
+        hits: 2,
+        total: 2,
+        hitRate: 1
+      });
+    });
+
     it('should prefer scope-matched agent when feedback improved its hit rate', () => {
       router.reportSuccess('code-reviewer');
       const intent = { wms: { isWmsRelated: false }, complexity: COMPLEXITY_LEVELS.LOW };
