@@ -2,7 +2,14 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { interactiveMode, runInstall, runUpdate, runUninstall, runRoute } from '../src/index.js';
+import {
+  interactiveMode,
+  runInstall,
+  runUpdate,
+  runUninstall,
+  runRoute,
+  runWmsAuto
+} from '../src/index.js';
 import { getPackageVersion, COMPONENTS, openBrowser } from '../src/utils.js';
 import { DOCS_URL } from '../src/config.js';
 import { KnowledgeSteward } from '../src/knowledge/knowledge-steward.js';
@@ -432,6 +439,22 @@ program
   .action(async (intent, options) => {
     try {
       await runRoute(intent, options);
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('wms:auto <intent>')
+  .description('运行 wms:auto 编排入口')
+  .option('-j, --json', '以 JSON 格式输出')
+  .option('--run', '执行完整编排流程')
+  .option('--present-quest-map', '标记 Quest Map 已展示给用户')
+  .option('--approve-quest-map', '确认 Quest Map 后允许进入执行阶段')
+  .action(async (intent, options) => {
+    try {
+      await runWmsAuto(intent, options);
     } catch (error) {
       console.error(chalk.red('错误：'), error.message);
       process.exit(1);

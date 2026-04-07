@@ -10,6 +10,7 @@ import {
 import { getInstalledVersion, COMPONENTS, openBrowser } from './utils.js';
 import { logger } from './logger.js';
 import { DOCS_URL } from './config.js';
+import { ORCHESTRATION_MODE, WmsAutoOrchestrator } from './wms/runtime/index.js';
 
 /**
  * 交互模式 - 主菜单
@@ -215,4 +216,23 @@ export async function runRoute(userIntent, options = {}) {
   console.log('');
   console.log(chalk.gray('━'.repeat(50)));
   console.log('');
+}
+
+export async function runWmsAuto(userIntent, options = {}) {
+  const orchestrator = options.orchestrator ?? new WmsAutoOrchestrator();
+  const runtimeOptions = {
+    ...options.runtimeOptions,
+    mode: options.run ? ORCHESTRATION_MODE.RUN : ORCHESTRATION_MODE.PLAN_ONLY,
+    questMapApproved: Boolean(options.approveQuestMap),
+    questMapPresented: Boolean(options.presentQuestMap),
+    source: options.source ?? 'src/index'
+  };
+
+  const result = await orchestrator.run(userIntent, runtimeOptions);
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+  }
+
+  return result;
 }

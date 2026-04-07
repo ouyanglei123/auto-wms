@@ -51,7 +51,8 @@ import {
   runUpdate,
   runUninstall,
   runDocs,
-  runRoute
+  runRoute,
+  runWmsAuto
 } from '../src/index.js';
 import { install, uninstall } from '../src/installer.js';
 import {
@@ -252,6 +253,58 @@ describe('index.js', () => {
       await runRoute('design system', {});
       const output = console.log.mock.calls.flat().join(' ');
       expect(output).toBeTruthy();
+    });
+  });
+
+  describe('runWmsAuto', () => {
+    it('should delegate to injected orchestrator and return state', async () => {
+      const run = vi.fn().mockResolvedValue({
+        status: 'completed',
+        completedPhases: ['discover', 'reason']
+      });
+
+      const result = await runWmsAuto('improve orchestration', {
+        json: true,
+        presentQuestMap: true,
+        orchestrator: { run }
+      });
+
+      expect(run).toHaveBeenCalledWith(
+        'improve orchestration',
+        expect.objectContaining({
+          mode: 'plan',
+          questMapApproved: false,
+          questMapPresented: true,
+          source: 'src/index'
+        })
+      );
+      expect(result.status).toBe('completed');
+      const output = console.log.mock.calls.flat().join(' ');
+      expect(output).toContain('completed');
+    });
+
+    it('should forward run mode approval and presentation options to runtime', async () => {
+      const run = vi.fn().mockResolvedValue({
+        status: 'completed',
+        completedPhases: ['discover', 'reason', 'execute', 'verify', 'deliver', 'learn']
+      });
+
+      await runWmsAuto('execute orchestration', {
+        run: true,
+        approveQuestMap: true,
+        presentQuestMap: true,
+        orchestrator: { run }
+      });
+
+      expect(run).toHaveBeenCalledWith(
+        'execute orchestration',
+        expect.objectContaining({
+          mode: 'run',
+          questMapApproved: true,
+          questMapPresented: true,
+          source: 'src/index'
+        })
+      );
     });
   });
 });
