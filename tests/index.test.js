@@ -384,5 +384,57 @@ describe('index.js', () => {
         })
       );
     });
+
+    it('should prioritize explicit runtime controls over runtimeOptions overrides', async () => {
+      const run = vi.fn().mockResolvedValue({
+        status: 'completed',
+        completedPhases: ['discover', 'reason', 'execute', 'verify', 'commit', 'learn']
+      });
+      const intentMatcher = {
+        analyze: vi.fn().mockReturnValue({
+          isWmsRelated: true,
+          targetService: 'outbound',
+          businessDomain: '发运',
+          confidence: 87
+        })
+      };
+
+      await runWmsAuto('execute orchestration', {
+        run: true,
+        approveQuestMap: true,
+        presentQuestMap: true,
+        source: 'src/index',
+        orchestrator: { run },
+        intentMatcher,
+        runtimeOptions: {
+          mode: 'plan',
+          questMapApproved: false,
+          questMapPresented: false,
+          source: 'runtime-options',
+          wmsContext: {
+            isWmsRelated: false,
+            confidence: 0
+          },
+          auditTrail: ['kept']
+        }
+      });
+
+      expect(run).toHaveBeenCalledWith(
+        'execute orchestration',
+        expect.objectContaining({
+          mode: 'run',
+          questMapApproved: true,
+          questMapPresented: true,
+          source: 'src/index',
+          wmsContext: expect.objectContaining({
+            isWmsRelated: true,
+            targetService: 'outbound',
+            businessDomain: '发运',
+            confidence: 87
+          }),
+          auditTrail: ['kept']
+        })
+      );
+    });
   });
 });
