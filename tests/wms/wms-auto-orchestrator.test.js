@@ -40,6 +40,10 @@ function createExecutors(overrides = {}) {
     learn: vi.fn().mockResolvedValue({
       learning: {
         updated: true
+      },
+      observation: {
+        pattern: 'Prefer explicit runtime gates',
+        action: 'Block unsafe phase progression before side effects'
       }
     }),
     ...overrides
@@ -682,5 +686,30 @@ describe('WmsAutoOrchestrator', () => {
 
     expect(state.status).toBe(PHASE_STATUS.BLOCKED);
     expect(state.currentPhase).toBe('learn');
+  });
+
+  it('blocks learn phase when learning output omits reusable observation evidence', async () => {
+    const executors = createExecutors({
+      learn: vi.fn().mockResolvedValue({
+        learning: {
+          updated: true
+        }
+      })
+    });
+    const orchestrator = new WmsAutoOrchestrator({ executors });
+
+    const state = await orchestrator.run('improve orchestration', {
+      mode: ORCHESTRATION_MODE.RUN,
+      questMapApproved: true,
+      questMapPresented: true,
+      source: 'test'
+    });
+
+    expect(state.status).toBe(PHASE_STATUS.BLOCKED);
+    expect(state.currentPhase).toBe('learn');
+    expect(state.blockers[0].details).toMatchObject({
+      phase: 'learn',
+      reason: 'insufficient-phase-result'
+    });
   });
 });

@@ -190,12 +190,16 @@ function isCommitArtifactSufficient(result) {
   return result?.persisted === true && hasNonEmptyString(result?.summary);
 }
 
+function hasReusableObservation(observation) {
+  return hasNonEmptyString(observation?.pattern) && hasNonEmptyString(observation?.action);
+}
+
 function isLearnArtifactSufficient(result) {
   if (isExplicitlySkipped(result)) {
     return Boolean(getSkipReason(result));
   }
 
-  return result?.learning?.updated === true;
+  return result?.learning?.updated === true && hasReusableObservation(result?.observation);
 }
 
 function isPhaseResultSufficient(phase, result) {
@@ -251,7 +255,7 @@ function getPhaseResultReason(phase, result) {
   if (phase === 'learn') {
     return (
       getSkipReason(result) ||
-      'learn phase requires learning.updated === true or explicit skip semantics.'
+      'learn phase requires learning.updated === true and a reusable observation or explicit skip semantics.'
     );
   }
 
