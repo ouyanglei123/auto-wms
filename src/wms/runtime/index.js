@@ -13,6 +13,8 @@ export {
   assertExecutionWriteGate,
   assertPhaseCanStart,
   getValueByPath,
-  hasRequiredValue
+  hasRequiredValue,
+  hasNonEmptyArray,
+  hasNonEmptyString
 } from './gate-checks.js';
 export { WmsAutoOrchestrator } from './wms-auto-orchestrator.js';

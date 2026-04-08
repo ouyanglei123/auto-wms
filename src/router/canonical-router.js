@@ -66,7 +66,6 @@ const COMPLEXITY_INDICATORS = {
     '重命名',
     '文档',
     '注释',
-    '格式',
     'format',
     'lint',
     '简单',
@@ -303,7 +302,15 @@ export class CanonicalRouter {
    * @returns {Array}
    */
   getHistory(limit) {
-    return limit ? this._routeHistory.slice(-limit) : this._routeHistory;
+    if (typeof limit === 'number') {
+      if (limit <= 0) {
+        return [];
+      }
+
+      return this._routeHistory.slice(-limit);
+    }
+
+    return [...this._routeHistory];
   }
 
   /**
@@ -354,7 +361,10 @@ export class CanonicalRouter {
         return ext ? `.${ext}` : '';
       })
       .filter(Boolean);
-    const wms = this._wmsIntentMatcher.analyze(userIntent);
+    const wms = this._wmsIntentMatcher.analyze(userIntent, {
+      lowerIntent,
+      tokens: keywords
+    });
     const wmsKeywords = wms.isWmsRelated
       ? uniq([wms.targetService, wms.businessDomain, ...(wms.matchedKeywords || [])])
       : [];

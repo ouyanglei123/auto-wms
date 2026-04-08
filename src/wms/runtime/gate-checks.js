@@ -1,5 +1,13 @@
 import { OrchestrationBlockedError } from './orchestration-errors.js';
 
+function hasNonEmptyArray(value) {
+  return Array.isArray(value) && value.length > 0;
+}
+
+function hasNonEmptyString(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
 const PHASE_REQUIREMENTS = {
   reason: ['artifacts.discover.healthReport'],
   execute: [
@@ -25,14 +33,6 @@ const STRICT_TRUE_PATHS = new Set([
   'approvals.questMapPresented',
   'approvals.questMapApproved'
 ]);
-
-function hasNonEmptyArray(value) {
-  return Array.isArray(value) && value.length > 0;
-}
-
-function hasNonEmptyString(value) {
-  return typeof value === 'string' && value.trim() !== '';
-}
 
 function hasExecutionEvidence(executeArtifact) {
   if (executeArtifact?.skipped === true) {
@@ -102,6 +102,8 @@ export function hasRequiredValue(value) {
 
   return value !== undefined && value !== null;
 }
+
+export { hasNonEmptyArray, hasNonEmptyString };
 
 function assertPaths(state, phase, requiredPaths) {
   const missingPaths = requiredPaths.filter((path) => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'path';
 import os from 'os';
 import fs from 'fs-extra';
@@ -566,6 +566,14 @@ tags: [novel-helper]
       });
 
       expect(result.agent.name).toBe('security-reviewer');
+    });
+
+    it('should analyze WMS intent only once per route', async () => {
+      const analyzeSpy = vi.spyOn(router._wmsIntentMatcher, 'analyze');
+
+      await router.route('重构出库波次分配流程');
+
+      expect(analyzeSpy).toHaveBeenCalledTimes(1);
     });
 
     it('should enrich route result with wms match reason when intent is wms-related', async () => {

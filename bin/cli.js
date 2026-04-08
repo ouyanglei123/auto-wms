@@ -31,6 +31,67 @@ const defaultHandlers = {
   runDoctor
 };
 
+function withCliErrorHandling(action) {
+  return async (...args) => {
+    try {
+      return await action(...args);
+    } catch (error) {
+      console.error(chalk.red('错误：'), error.message);
+      process.exit(1);
+    }
+  };
+}
+
+function parseCommaSeparatedList(value) {
+  return value
+    ? value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined;
+}
+
+function buildInstallOptions(options) {
+  return {
+    yes: options.yes,
+    force: options.force,
+    quiet: false,
+    components: parseCommaSeparatedList(options.components)
+  };
+}
+
+function buildStatusOptions(options) {
+  return {
+    json: Boolean(options.json),
+    directory: options.directory
+  };
+}
+
+function buildDoctorOptions(options) {
+  return {
+    json: Boolean(options.json),
+    fix: Boolean(options.fix),
+    directory: options.directory
+  };
+}
+
+function buildWmsAutoOptions(options) {
+  return {
+    json: Boolean(options.json),
+    run: Boolean(options.run),
+    presentQuestMap: Boolean(options.presentQuestMap),
+    approveQuestMap: Boolean(options.approveQuestMap)
+  };
+}
+
+function buildSaveTags(options) {
+  return parseCommaSeparatedList(options.tags);
+}
+
+function buildInstinctArray(options, key) {
+  return parseCommaSeparatedList(options[key]);
+}
+
 export function createProgram(handlers = defaultHandlers) {
   const program = new Command();
 
@@ -56,14 +117,11 @@ export function createProgram(handlers = defaultHandlers) {
     .version(getPackageVersion(), '-v, --version', '显示版本号');
 
   // 默认命令 - 交互模式
-  program.action(async () => {
-    try {
+  program.action(
+    withCliErrorHandling(async () => {
       await handlers.interactiveMode();
-    } catch (error) {
-      console.error(chalk.red('错误：'), error.message);
-      process.exit(1);
-    }
-  });
+    })
+  );
 
   // 安装命令
   program
@@ -72,52 +130,33 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-y, --yes', '跳过确认提示')
     .option('-f, --force', '强制覆盖现有文件（不备份）')
     .option('-c, --components <list>', '指定安装的组件，逗号分隔（如: agents,commands,skills）')
-    .action(async (options) => {
-      try {
-        await handlers.runInstall({
-          yes: options.yes,
-          force: options.force,
-          quiet: false,
-          components: options.components
-            ? options.components
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean)
-            : undefined
-        });
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+    .action(
+      withCliErrorHandling(async (options) => {
+        await handlers.runInstall(buildInstallOptions(options));
+      })
+    );
 
   // 更新命令
   program
     .command('update')
     .description('更新 Auto WMS')
     .option('-y, --yes', '跳过确认提示')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         await handlers.runUpdate({ yes: options.yes });
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   // 卸载命令
   program
     .command('uninstall')
     .description('卸载 Auto WMS')
     .option('-y, --yes', '跳过确认提示')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         await handlers.runUninstall({ yes: options.yes });
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   // 列表命令
   program
@@ -137,18 +176,20 @@ export function createProgram(handlers = defaultHandlers) {
   program
     .command('docs')
     .description('打开使用文档')
-    .action(async () => {
-      const url = DOCS_URL;
-      console.log('');
-      console.log(chalk.cyan('正在打开文档...'));
-      console.log(chalk.gray(`  ${url}`));
-      console.log('');
+    .action(
+      withCliErrorHandling(async () => {
+        const url = DOCS_URL;
+        console.log('');
+        console.log(chalk.cyan('正在打开文档...'));
+        console.log(chalk.gray(`  ${url}`));
+        console.log('');
 
-      const success = await openBrowser(url);
-      if (!success) {
-        console.log(chalk.yellow('无法自动打开浏览器，请手动访问上述链接。'));
-      }
-    });
+        const success = await openBrowser(url);
+        if (!success) {
+          console.log(chalk.yellow('无法自动打开浏览器，请手动访问上述链接。'));
+        }
+      })
+    );
 
   // 知识保存命令
   const save = program.command('save').description('保存知识条目（灵感、踩坑经验、架构决策等）');
@@ -160,15 +201,10 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-t, --category <type>', '指定分类（prompt, trap, pattern, decision）')
     .option('--tags <tags>', '标签，逗号分隔（如: react,performance）')
     .option('--git', '启用 git 自动提交（默认关闭）')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         const steward = new KnowledgeSteward();
-        const tags = options.tags
-          ? options.tags
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : undefined;
+        const tags = buildSaveTags(options);
 
         const result = await steward.save({
           content: options.content,
@@ -188,17 +224,14 @@ export function createProgram(handlers = defaultHandlers) {
           console.log(chalk.yellow(`保存失败: ${result.error}`));
           process.exit(1);
         }
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   save
     .command('list')
     .description('列出所有知识条目统计')
-    .action(async () => {
-      try {
+    .action(
+      withCliErrorHandling(async () => {
         const steward = new KnowledgeSteward();
         const stats = await steward.list();
 
@@ -212,18 +245,15 @@ export function createProgram(handlers = defaultHandlers) {
           );
         }
         console.log('');
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   save
     .command('search')
     .description('搜索知识条目')
     .requiredOption('-q, --query <keyword>', '搜索关键词')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         const steward = new KnowledgeSteward();
         const results = await steward.search(options.query);
 
@@ -245,11 +275,8 @@ export function createProgram(handlers = defaultHandlers) {
             console.log('');
           }
         }
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   save
     .command('instinct')
@@ -259,21 +286,11 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-s, --source <text>', '观察来源')
     .option('-e, --evidence <items>', '证据，逗号分隔')
     .option('--tags <tags>', '标签，逗号分隔')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         const manager = new InstinctManager();
-        const evidence = options.evidence
-          ? options.evidence
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : undefined;
-        const tags = options.tags
-          ? options.tags
-              .split(',')
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : undefined;
+        const evidence = buildInstinctArray(options, 'evidence');
+        const tags = buildInstinctArray(options, 'tags');
 
         const result = await manager.observe({
           pattern: options.pattern,
@@ -292,17 +309,14 @@ export function createProgram(handlers = defaultHandlers) {
         console.log(chalk.gray(`  模式: ${result.pattern}`));
         console.log(chalk.gray(`  置信度: ${result.confidence}`));
         console.log(chalk.gray(`  观察次数: ${result.observations}`));
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   program
     .command('internal:learn-task-event')
     .description('内部命令：从 TaskCompleted 事件学习 instinct')
-    .action(async () => {
-      try {
+    .action(
+      withCliErrorHandling(async () => {
         const rawInput = await readStdin();
         if (!rawInput.trim()) {
           return;
@@ -316,18 +330,15 @@ export function createProgram(handlers = defaultHandlers) {
         }
 
         console.log(chalk.green(`Learned instinct candidate: ${result.result.pattern}`));
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   program
     .command('learn-history')
     .description('从最近的 Git 历史提取可复用的 instinct 候选')
     .option('-n, --commits <count>', '分析最近多少次提交')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         const result = await learnFromGitHistory({
           projectDir: process.cwd(),
           projectName: 'auto-wms',
@@ -345,17 +356,14 @@ export function createProgram(handlers = defaultHandlers) {
         console.log(chalk.gray(`  已分析提交: ${result.analyzedCommits}`));
         console.log(chalk.gray(`  观察次数: ${result.result.observations}`));
         console.log(chalk.gray(`  当前类型: ${result.result.kind}`));
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   program
     .command('instinct-status')
     .description('查看已学习的 Instinct 与候选模式')
-    .action(async () => {
-      try {
+    .action(
+      withCliErrorHandling(async () => {
         const manager = new InstinctManager();
         const status = await manager.getStatus();
 
@@ -387,63 +395,51 @@ export function createProgram(handlers = defaultHandlers) {
           }
         }
         console.log('');
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   program
     .command('instinct-export')
     .description('导出已学习的 Instinct 与候选模式')
     .option('-o, --output <path>', '导出文件路径')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         const manager = new InstinctManager();
         const result = await manager.exportTo(options.output);
         console.log(chalk.green('Instinct 已导出'));
         console.log(chalk.gray(`  文件: ${result.filePath}`));
         console.log(chalk.gray(`  Instincts: ${result.counts.instincts}`));
         console.log(chalk.gray(`  Candidates: ${result.counts.candidates}`));
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   program
     .command('instinct-import <file>')
     .description('导入已学习的 Instinct 与候选模式')
-    .action(async (file) => {
-      try {
+    .action(
+      withCliErrorHandling(async (file) => {
         const manager = new InstinctManager();
         const result = await manager.importFrom(file);
         console.log(chalk.green('Instinct 已导入'));
         console.log(chalk.gray(`  文件: ${result.filePath}`));
         console.log(chalk.gray(`  导入 instincts: ${result.counts.instincts}`));
         console.log(chalk.gray(`  导入 candidates: ${result.counts.candidates}`));
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   program
     .command('instinct-evolve')
     .description('聚合相关 Instinct 为更高阶技能候选')
     .option('-o, --output <path>', '导出文件路径')
-    .action(async (options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (options) => {
         const manager = new InstinctManager();
         const result = await manager.evolveTo(options.output);
         console.log(chalk.green('Instinct 已进化'));
         console.log(chalk.gray(`  文件: ${result.filePath}`));
         console.log(chalk.gray(`  技能候选: ${result.count}`));
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   // 路由命令
   program
@@ -451,31 +447,22 @@ export function createProgram(handlers = defaultHandlers) {
     .description('使用 Canonical Router 智能路由到最合适的 Agent')
     .option('-d, --debug', '显示详细的路由决策过程')
     .option('-j, --json', '以 JSON 格式输出')
-    .action(async (intent, options) => {
-      try {
+    .action(
+      withCliErrorHandling(async (intent, options) => {
         await handlers.runRoute(intent, options);
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+      })
+    );
 
   program
     .command('status')
     .description('查看项目状态和能力安装情况')
     .option('-j, --json', '以 JSON 格式输出')
     .option('-d, --directory <path>', '指定项目目录')
-    .action(async (options) => {
-      try {
-        await handlers.runStatus({
-          json: Boolean(options.json),
-          directory: options.directory
-        });
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+    .action(
+      withCliErrorHandling(async (options) => {
+        await handlers.runStatus(buildStatusOptions(options));
+      })
+    );
 
   program
     .command('doctor')
@@ -483,18 +470,11 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-j, --json', '以 JSON 格式输出')
     .option('--fix', '执行自动修复（当前版本保持只读诊断）')
     .option('-d, --directory <path>', '指定项目目录')
-    .action(async (options) => {
-      try {
-        await handlers.runDoctor({
-          json: Boolean(options.json),
-          fix: Boolean(options.fix),
-          directory: options.directory
-        });
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+    .action(
+      withCliErrorHandling(async (options) => {
+        await handlers.runDoctor(buildDoctorOptions(options));
+      })
+    );
 
   program
     .command('wms:auto <intent>')
@@ -503,19 +483,11 @@ export function createProgram(handlers = defaultHandlers) {
     .option('--run', '执行完整编排流程')
     .option('--present-quest-map', '标记 Quest Map 已展示给用户')
     .option('--approve-quest-map', '确认 Quest Map 后允许进入执行阶段')
-    .action(async (intent, options) => {
-      try {
-        await handlers.runWmsAuto(intent, {
-          json: Boolean(options.json),
-          run: Boolean(options.run),
-          presentQuestMap: Boolean(options.presentQuestMap),
-          approveQuestMap: Boolean(options.approveQuestMap)
-        });
-      } catch (error) {
-        console.error(chalk.red('错误：'), error.message);
-        process.exit(1);
-      }
-    });
+    .action(
+      withCliErrorHandling(async (intent, options) => {
+        await handlers.runWmsAuto(intent, buildWmsAutoOptions(options));
+      })
+    );
 
   return program;
 }

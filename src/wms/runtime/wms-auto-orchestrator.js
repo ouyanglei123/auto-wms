@@ -1,4 +1,9 @@
-import { assertExecutionWriteGate, assertPhaseCanStart } from './gate-checks.js';
+import {
+  assertExecutionWriteGate,
+  assertPhaseCanStart,
+  hasNonEmptyArray,
+  hasNonEmptyString
+} from './gate-checks.js';
 import { OrchestrationBlockedError } from './orchestration-errors.js';
 import {
   ORCHESTRATION_MODE,
@@ -9,131 +14,11 @@ import {
   createInitialOrchestrationState,
   finalizeState
 } from './phase-contracts.js';
-
-function createPlaceholderArtifact(phase, patch) {
-  return {
-    __placeholder: true,
-    phase,
-    ...patch
-  };
-}
-
-function normalizeCodeLocationList(value) {
-  return Array.isArray(value)
-    ? value.filter((item) => typeof item === 'string' && item.trim())
-    : [];
-}
-
-function buildDefaultContracts(wmsContext) {
-  if (!wmsContext?.isWmsRelated) {
-    return ['CONTRACT: collect WMS context before execution'];
-  }
-
-  const targetService = wmsContext.targetService ?? 'unknown-service';
-  const businessDomain = wmsContext.businessDomain ?? '通用';
-  const confidence = wmsContext.confidence ?? 0;
-  const controllers = normalizeCodeLocationList(wmsContext.codeLocations?.controllers);
-  const services = normalizeCodeLocationList(wmsContext.codeLocations?.services);
-  const entities = normalizeCodeLocationList(wmsContext.codeLocations?.entities);
-
-  return [
-    `SERVICE:${targetService}`,
-    `DOMAIN:${businessDomain}`,
-    `CONFIDENCE:${confidence}`,
-    `CONTROLLERS:${controllers.join(', ') || 'N/A'}`,
-    `SERVICES:${services.join(', ') || 'N/A'}`,
-    `ENTITIES:${entities.join(', ') || 'N/A'}`
-  ];
-}
-
-function buildDefaultQuestMap(wmsContext) {
-  if (!wmsContext?.isWmsRelated) {
-    return 'Quest Map is pending runtime integration.';
-  }
-
-  const targetService = wmsContext.targetService ?? 'unknown-service';
-  const businessDomain = wmsContext.businessDomain ?? '通用';
-  const confidence = wmsContext.confidence ?? 0;
-  const controllers = normalizeCodeLocationList(wmsContext.codeLocations?.controllers);
-  const services = normalizeCodeLocationList(wmsContext.codeLocations?.services);
-  const entities = normalizeCodeLocationList(wmsContext.codeLocations?.entities);
-
-  return [
-    '# Quest Map',
-    `- Target Service: ${targetService}`,
-    `- Business Domain: ${businessDomain}`,
-    `- Confidence: ${confidence}%`,
-    `- Controllers: ${controllers.join(', ') || 'N/A'}`,
-    `- Services: ${services.join(', ') || 'N/A'}`,
-    `- Entities: ${entities.join(', ') || 'N/A'}`,
-    '- Objective: trace the identified WMS business path before any write phase.',
-    '- Verification: confirm the mapped controller/service/entity chain matches the intended business flow.'
-  ].join('\n');
-}
-
-function createDefaultExecutors() {
-  return {
-    discover: async (state) => ({
-      healthReport: {
-        status: 'yellow',
-        questDesignerAvailable: true,
-        hooksEnabled: true
-      },
-      wmsContext: state.artifacts.discover.wmsContext ?? null
-    }),
-    reason: async (state) => ({
-      questDesigner: {
-        invoked: true,
-        agent: 'quest-designer',
-        generatedAt: new Date().toISOString()
-      },
-      questMap: buildDefaultQuestMap(state.artifacts.discover.wmsContext),
-      wmsContext: state.artifacts.discover.wmsContext ?? null,
-      contracts: buildDefaultContracts(state.artifacts.discover.wmsContext)
-    }),
-    execute: async () =>
-      createPlaceholderArtifact('execute', {
-        executionLog: { steps: [] },
-        reason: 'Default execute executor is a placeholder and cannot perform writes.'
-      }),
-    verify: async () =>
-      createPlaceholderArtifact('verify', {
-        verification: { passed: false, checks: [] },
-        reason: 'Default verify executor is a placeholder and cannot validate execution.'
-      }),
-    commit: async () =>
-      createPlaceholderArtifact('commit', {
-        summary: 'pending',
-        persisted: false,
-        reason: 'Default commit executor is a placeholder and cannot persist changes.'
-      }),
-    learn: async () =>
-      createPlaceholderArtifact('learn', {
-        learning: { updated: false },
-        reason: 'Default learn executor is a placeholder and cannot record learnings.'
-      })
-  };
-}
-
-function createExecutorEntries(executors = {}) {
-  const normalizedExecutors = normalizeExecutors(executors);
-  const defaultExecutors = createDefaultExecutors();
-
-  return Object.fromEntries(
-    Object.keys(defaultExecutors).map((phase) => {
-      const overrideExecutor = normalizedExecutors[phase];
-      const executor =
-        typeof overrideExecutor === 'function' ? overrideExecutor : defaultExecutors[phase];
-      return [
-        phase,
-        {
-          executor,
-          isDefault: executor === defaultExecutors[phase]
-        }
-      ];
-    })
-  );
-}
+import {
+  buildDefaultContracts,
+  buildDefaultQuestMap,
+  createExecutorEntries
+} from './wms-auto-artifacts.js';
 
 const WRITE_PHASES = new Set(['execute', 'verify', 'commit', 'learn']);
 
@@ -147,14 +32,6 @@ function isExplicitlySkipped(result) {
 
 function getSkipReason(result) {
   return typeof result?.reason === 'string' && result.reason.trim() ? result.reason : '';
-}
-
-function hasNonEmptyArray(value) {
-  return Array.isArray(value) && value.length > 0;
-}
-
-function hasNonEmptyString(value) {
-  return typeof value === 'string' && value.trim() !== '';
 }
 
 function isReasonArtifactSufficient(result) {
@@ -343,17 +220,6 @@ function createPhaseBlocker(phase, message, details = {}) {
       phase,
       ...details
     }
-  };
-}
-
-function normalizeExecutors(executors = {}) {
-  if (executors.commit || !executors.deliver) {
-    return executors;
-  }
-
-  return {
-    ...executors,
-    commit: executors.deliver
   };
 }
 
