@@ -204,6 +204,16 @@ tags: [error, debugging, patterns, build-fix, troubleshooting]
 | 任务堆积 | Job执行时间超过cron间隔 | 检查任务内是否有慢查询/远程调用 |
 | 死锁(用户被锁定) | 拣货任务卡住，用户无法操作 | `TaskLockUserCleanJob` 会自动清理25分钟前的占用 |
 
+### 3.8 拣货单位换算（详见 `memory/wms-unit-conversion.md`）
+
+| 错误表现 | 根因 | 定位方法 |
+|---------|------|---------|
+| 箱/拆零/基本数量全为null | `pick_unit` JOIN 加了 `status=1`，拣货时的基本单位已失效 | 去掉 pick_unit 的 status 条件 |
+| 拆零数量算出KG而非盒 | 拆零兜底用 `1` 而非 `pick_ratio` | 改为 `COALESCE(split_ratio, pick_ratio)` |
+| 基本数量多乘了ratio（如算出2而非4） | 基本数量列直接用 `base_picked_qty` | 改为 `MOD(换算量, 箱ratio) / pick_ratio` |
+| 无箱时基本数量为0 | ELSE分支硬编码为0 | 无箱时基本数量 = `base_picked_qty` |
+| 无箱时所有列都错 | max_pl 未 JOIN 或 COALESCE 兜底用 1 | 用 `COALESCE(max_ratio, pick_ratio)` 兜底 |
+
 ---
 
 ## 4. 跨服务调用错误
