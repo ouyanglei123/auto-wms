@@ -328,5 +328,19 @@ Content in sub directory.
       expect(result.file_hashes.created_at).toBeGreaterThan(0);
       expect(result.file_hashes.files.length).toBe(3);
     });
+
+    it('should remove only targeted cache file entries', async () => {
+      const result = await indexer.buildIndex({ useCache: false });
+      const files = result.file_hashes.files;
+
+      indexer.invalidateCache(['test-skill.md']);
+
+      expect(files.some((file) => file.relativePath === 'test-skill.md')).toBe(true);
+      expect(result.file_hashes.files.length).toBe(3);
+      expect(indexer._cache.file_hashes.files.length).toBe(2);
+      expect(
+        indexer._cache.file_hashes.files.some((file) => file.relativePath === 'test-skill.md')
+      ).toBe(false);
+    });
   });
 });

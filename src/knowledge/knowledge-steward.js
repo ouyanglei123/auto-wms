@@ -12,6 +12,51 @@ import { execSync } from 'child_process';
 import { logger } from '../logger.js';
 import { classifyContent, CATEGORIES, getCategoryByName } from './categories.js';
 
+async function loadCategoryFiles(insightsDir, categories = CATEGORIES) {
+  return Promise.all(
+    categories.map(async (category) => {
+      const filePath = path.join(insightsDir, category.file);
+      return {
+        category,
+        filePath,
+        content: await fs.readFile(filePath, 'utf-8')
+      };
+    })
+  );
+}
+
+function parseKnowledgeEntries(content) {
+  const lines = String(content || '').split(/\r?\n/);
+  const blocks = [];
+  let current = [];
+  let inEntry = false;
+
+  for (const line of lines) {
+    if (!inEntry) {
+      if (line.startsWith('### ')) {
+        inEntry = true;
+        current = [line];
+      }
+      continue;
+    }
+
+    if (line.trim() === '---') {
+      blocks.push(current.join('\n').trim());
+      current = [];
+      inEntry = false;
+      continue;
+    }
+
+    current.push(line);
+  }
+
+  if (inEntry && current.length > 0) {
+    blocks.push(current.join('\n').trim());
+  }
+
+  return blocks.filter(Boolean);
+}
+
 /**
  * @typedef {Object} SaveOptions
  * @property {string} content - 要保存的内容
@@ -43,6 +88,8 @@ class KnowledgeSteward {
     this._index = null; // 搜索索引缓存
     this._indexTimestamp = 0;
     this._indexTTL = 5 * 60 * 1000; // 索引 TTL: 5 分钟
+    this._indexPromise = null;
+    this.logger = logger;
   }
 
   /**
@@ -77,53 +124,60 @@ class KnowledgeSteward {
       return this._index;
     }
 
-    await this.ensureStructure();
-    const index = { entries: [], invertedIndex: new Map() };
-
-    for (const cat of CATEGORIES) {
-      const filePath = path.join(this.insightsDir, cat.file);
-      const content = await fs.readFile(filePath, 'utf-8');
-
-      // 按条目分割
-      const entryBlocks = content.split(/^### /m).filter(Boolean);
-
-      for (const block of entryBlocks) {
-        const lines = block.trim().split('\n');
-        const title = lines[0]?.trim() || '';
-        const body = lines.slice(2).join('\n');
-
-        // 提取标签
-        const tagMatch = body.match(/\*\*标签\*\*:\s*(.+)/);
-        const tags = tagMatch ? tagMatch[1].split(',').map((t) => t.trim()) : [];
-
-        const entry = {
-          id: `${cat.name}:${title}`,
-          category: cat.name,
-          title,
-          body,
-          tags,
-          timestamp: now
-        };
-
-        index.entries.push(entry);
-
-        // 构建倒排索引
-        const words = `${title} ${body} ${tags.join(' ')}`.toLowerCase().split(/\s+/);
-        for (const word of words) {
-          if (word.length < 2) continue;
-          if (!index.invertedIndex.has(word)) {
-            index.invertedIndex.set(word, []);
-          }
-          index.invertedIndex.get(word).push(entry.id);
-        }
-      }
+    if (this._indexPromise) {
+      return this._indexPromise;
     }
 
-    this._index = index;
-    this._indexTimestamp = now;
-    this.logger?.debug(`知识索引已构建: ${index.entries.length} 条目`);
+    this._indexPromise = (async () => {
+      try {
+        await this.ensureStructure();
+        const index = { entries: [], invertedIndex: new Map() };
+        const categoryFiles = await loadCategoryFiles(this.insightsDir);
 
-    return index;
+        for (const { category: cat, content } of categoryFiles) {
+          for (const block of parseKnowledgeEntries(content)) {
+            const lines = block.split('\n');
+            const title = lines[0]?.trim() || '';
+            const body = lines.slice(2).join('\n');
+
+            // 提取标签
+            const tagMatch = body.match(/\*\*标签\*\*:\s*(.+)/);
+            const tags = tagMatch ? tagMatch[1].split(',').map((t) => t.trim()) : [];
+
+            const entry = {
+              id: `${cat.name}:${title}`,
+              category: cat.name,
+              title,
+              body,
+              tags,
+              timestamp: now
+            };
+
+            index.entries.push(entry);
+
+            // 构建倒排索引
+            const words = `${title} ${body} ${tags.join(' ')}`.toLowerCase().split(/\s+/);
+            for (const word of words) {
+              if (word.length < 2) continue;
+              if (!index.invertedIndex.has(word)) {
+                index.invertedIndex.set(word, []);
+              }
+              index.invertedIndex.get(word).push(entry.id);
+            }
+          }
+        }
+
+        this._index = index;
+        this._indexTimestamp = now;
+        this.logger.debug(`知识索引已构建: ${index.entries.length} 条目`);
+
+        return index;
+      } finally {
+        this._indexPromise = null;
+      }
+    })();
+
+    return this._indexPromise;
   }
 
   /**
@@ -198,15 +252,13 @@ class KnowledgeSteward {
   async list() {
     await this.ensureStructure();
     const results = [];
+    const categoryFiles = await loadCategoryFiles(this.insightsDir);
 
-    for (const cat of CATEGORIES) {
-      const filePath = path.join(this.insightsDir, cat.file);
-      const content = await fs.readFile(filePath, 'utf-8');
-      // 统计条目数（以 ### 开头的行）
-      const count = (content.match(/^### /gm) || []).length;
+    for (const { category: cat, filePath, content } of categoryFiles) {
+      const count = parseKnowledgeEntries(content).length;
       results.push({
         category: cat.name,
-        file: cat.file,
+        file: path.basename(filePath),
         count,
         description: cat.description
       });
@@ -238,16 +290,12 @@ class KnowledgeSteward {
     await this.ensureStructure();
     const lowerQuery = query.toLowerCase();
     const results = [];
+    const categoryFiles = await loadCategoryFiles(this.insightsDir);
 
-    for (const cat of CATEGORIES) {
+    for (const { category: cat, filePath, content } of categoryFiles) {
       if (category && cat.name !== category) continue;
 
-      const filePath = path.join(this.insightsDir, cat.file);
-      const content = await fs.readFile(filePath, 'utf-8');
-
-      // 按条目分割（以 ### 分隔）
-      const entries = content.split(/^### /m).filter(Boolean);
-      const matches = entries
+      const matches = parseKnowledgeEntries(content)
         .filter((entry) => {
           const matchesQuery = !lowerQuery || entry.toLowerCase().includes(lowerQuery);
           if (!matchesQuery) {
@@ -267,7 +315,7 @@ class KnowledgeSteward {
       if (matches.length > 0) {
         results.push({
           category: cat.name,
-          file: cat.file,
+          file: path.basename(filePath),
           matches
         });
       }

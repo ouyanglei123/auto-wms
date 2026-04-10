@@ -1,5 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 
+const mockKnowledgeSteward = vi.hoisted(() => ({
+  save: vi.fn(),
+  list: vi.fn(),
+  search: vi.fn()
+}));
+
+const mockInstinctManager = vi.hoisted(() => ({
+  observe: vi.fn(),
+  getStatus: vi.fn(),
+  exportTo: vi.fn(),
+  importFrom: vi.fn(),
+  evolveTo: vi.fn()
+}));
+
+const mockOpenBrowser = vi.hoisted(() => vi.fn().mockResolvedValue(true));
+const mockGetPackageVersion = vi.hoisted(() => () => '0.27.0');
+
 vi.mock('chalk', () => ({
   default: {
     cyan: Object.assign((s) => s, { bold: (s) => s }),
@@ -12,7 +29,7 @@ vi.mock('chalk', () => ({
   }
 }));
 
-vi.mock('../src/index.js', () => ({
+vi.mock('../src/cli-actions.js', () => ({
   interactiveMode: vi.fn(),
   runInstall: vi.fn(),
   runUpdate: vi.fn(),
@@ -25,9 +42,9 @@ vi.mock('../src/index.js', () => ({
 }));
 
 vi.mock('../src/utils.js', () => ({
-  getPackageVersion: () => '0.27.0',
+  getPackageVersion: mockGetPackageVersion,
   COMPONENTS: {},
-  openBrowser: vi.fn().mockResolvedValue(true)
+  openBrowser: mockOpenBrowser
 }));
 
 vi.mock('../src/config.js', () => ({
@@ -35,21 +52,11 @@ vi.mock('../src/config.js', () => ({
 }));
 
 vi.mock('../src/knowledge/knowledge-steward.js', () => ({
-  KnowledgeSteward: class {
-    save = vi.fn();
-    list = vi.fn();
-    search = vi.fn();
-  }
+  KnowledgeSteward: vi.fn(() => mockKnowledgeSteward)
 }));
 
 vi.mock('../src/learning/instinct-manager.js', () => ({
-  InstinctManager: class {
-    observe = vi.fn();
-    getStatus = vi.fn();
-    exportTo = vi.fn();
-    importFrom = vi.fn();
-    evolveTo = vi.fn();
-  }
+  InstinctManager: vi.fn(() => mockInstinctManager)
 }));
 
 vi.mock('../src/learning/task-event-learning.js', () => ({

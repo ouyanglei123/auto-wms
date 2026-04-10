@@ -73,6 +73,58 @@ import {
 const SKILL_FILE_PATTERNS = ['.md'];
 const SKILL_DIR_INDICATOR = 'SKILL.md';
 
+function hashContent(content) {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+async function collectSkillFiles(skillsDir) {
+  if (!(await fs.pathExists(skillsDir))) {
+    return [];
+  }
+
+  const topLevelEntries = await fs.readdir(skillsDir, { withFileTypes: true });
+  const discovered = await Promise.all(
+    topLevelEntries.map(async (entry) => {
+      try {
+        const entryPath = path.join(skillsDir, entry.name);
+
+        if (entry.isFile() && SKILL_FILE_PATTERNS.some((pattern) => entry.name.endsWith(pattern))) {
+          const stat = await fs.stat(entryPath);
+          return {
+            filePath: entryPath,
+            relativePath: entry.name,
+            isDirectory: false,
+            size: stat.size,
+            mtime: stat.mtimeMs
+          };
+        }
+
+        if (entry.isDirectory()) {
+          const skillFile = path.join(entryPath, SKILL_DIR_INDICATOR);
+          try {
+            const fileStat = await fs.stat(skillFile);
+            return {
+              filePath: skillFile,
+              relativePath: `${entry.name}/SKILL.md`,
+              isDirectory: true,
+              size: fileStat.size,
+              mtime: fileStat.mtimeMs
+            };
+          } catch {
+            return null;
+          }
+        }
+
+        return null;
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  return discovered.filter(Boolean);
+}
+
 export class SkillIndexer {
   /**
    * @param {string} skillsDir - Skills 根目录路径
@@ -154,38 +206,27 @@ export class SkillIndexer {
 
     const entries = [];
     let fullContentSize = 0;
+    const fileHashes = [];
 
-    // 扫描顶层 .md 文件（单文件 Skill）
-    const topLevelFiles = await fs.readdir(this.skillsDir);
-    for (const file of topLevelFiles) {
-      const filePath = path.join(this.skillsDir, file);
-      const stat = await fs.stat(filePath);
+    const skillFiles = await collectSkillFiles(this.skillsDir);
+    for (const file of skillFiles) {
+      fullContentSize += file.size;
 
-      if (stat.isFile() && SKILL_FILE_PATTERNS.some((p) => file.endsWith(p))) {
-        fullContentSize += stat.size;
-        const entry = await this._extractMetadata(filePath, file);
+      try {
+        const content = await fs.readFile(file.filePath, 'utf-8');
+        const entry = await this._extractMetadata(file, content);
         if (entry) {
+          entry.isDirectory = file.isDirectory;
           entries.push(entry);
         }
-      }
-    }
 
-    // 扫描子目录（目录型 Skill，含 SKILL.md）
-    for (const dir of topLevelFiles) {
-      const dirPath = path.join(this.skillsDir, dir);
-      const stat = await fs.stat(dirPath);
-
-      if (stat.isDirectory()) {
-        const skillFile = path.join(dirPath, SKILL_DIR_INDICATOR);
-        if (await fs.pathExists(skillFile)) {
-          const fileStat = await fs.stat(skillFile);
-          fullContentSize += fileStat.size;
-          const entry = await this._extractMetadata(skillFile, `${dir}/SKILL.md`);
-          if (entry) {
-            entry.isDirectory = true;
-            entries.push(entry);
-          }
-        }
+        fileHashes.push({
+          relativePath: file.relativePath,
+          hash: hashContent(content),
+          mtime: file.mtime
+        });
+      } catch (error) {
+        this.logger.warn(`提取 Skill 元数据失败 ${file.filePath}: ${error.message}`);
       }
     }
 
@@ -206,9 +247,6 @@ export class SkillIndexer {
     } catch {
       // 不在 git 仓库中，使用空字符串
     }
-
-    // 计算当前文件 hashes
-    const fileHashes = await this._computeFileHashes();
 
     const result = {
       totalSkills: entries.length,
@@ -247,32 +285,16 @@ export class SkillIndexer {
       (this._cache?.file_hashes?.files || []).map((f) => [f.relativePath, f.mtime])
     );
 
-    if (!(await fs.pathExists(this.skillsDir))) {
-      return changed;
-    }
-
     const currentFiles = new Set();
+    const skillFiles = await collectSkillFiles(this.skillsDir);
 
-    const scanDir = async (basePath) => {
-      const entries = await fs.readdir(basePath);
-      for (const entry of entries) {
-        const fullPath = path.join(basePath, entry);
-        const stat = await fs.stat(fullPath);
-
-        if (stat.isFile() && SKILL_FILE_PATTERNS.some((p) => entry.endsWith(p))) {
-          const relativePath = normalizeRelativePath(this.skillsDir, fullPath);
-          currentFiles.add(relativePath);
-          const cachedMtime = cachedFiles.get(relativePath);
-          if (cachedMtime !== stat.mtimeMs) {
-            changed.push(relativePath);
-          }
-        } else if (stat.isDirectory()) {
-          await scanDir(fullPath);
-        }
+    for (const file of skillFiles) {
+      currentFiles.add(file.relativePath);
+      const cachedMtime = cachedFiles.get(file.relativePath);
+      if (cachedMtime !== file.mtime) {
+        changed.push(file.relativePath);
       }
-    };
-
-    await scanDir(this.skillsDir);
+    }
 
     for (const cachedPath of cachedFiles.keys()) {
       if (!currentFiles.has(cachedPath)) {
@@ -304,14 +326,20 @@ export class SkillIndexer {
    * @returns {Promise<{content: string, entry: SkillIndexEntry}|null>}
    */
   async loadContent(relativePath) {
+    if (typeof relativePath !== 'string' || relativePath.trim() === '') {
+      this.logger.warn(`Skill 路径无效: ${String(relativePath)}`);
+      return null;
+    }
+
+    if (path.isAbsolute(relativePath)) {
+      this.logger.warn(`Skill 路径越界: ${relativePath}`);
+      return null;
+    }
+
     const filePath = path.resolve(this.skillsDir, relativePath);
     const normalizedRelativePath = normalizeRelativePath(this.skillsDir, filePath);
 
-    if (
-      normalizedRelativePath.startsWith('..') ||
-      path.isAbsolute(normalizedRelativePath) ||
-      normalizedRelativePath !== relativePath.replace(/\\/g, '/')
-    ) {
+    if (normalizedRelativePath.startsWith('..') || path.isAbsolute(normalizedRelativePath)) {
       this.logger.warn(`Skill 路径越界: ${relativePath}`);
       return null;
     }
@@ -323,13 +351,13 @@ export class SkillIndexer {
       return null;
     }
 
-    if (!(await fs.pathExists(filePath))) {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      return { content, entry };
+    } catch {
       this.logger.warn(`Skill 文件不存在: ${filePath}`);
       return null;
     }
-
-    const content = await fs.readFile(filePath, 'utf-8');
-    return { content, entry };
   }
 
   /**
@@ -362,13 +390,12 @@ export class SkillIndexer {
    * @returns {Promise<SkillIndexEntry|null>}
    * @private
    */
-  async _extractMetadata(filePath, relativePath) {
+  async _extractMetadata(file, content) {
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
-      const stat = await fs.stat(filePath);
+      const source = content ?? (await fs.readFile(file.filePath, 'utf-8'));
 
-      let name = path.basename(relativePath, '.md');
-      const frontmatter = extractFrontmatterBlock(content);
+      let name = path.basename(file.relativePath, '.md');
+      const frontmatter = extractFrontmatterBlock(source);
       const description = extractFrontmatterScalar(frontmatter, 'description');
       const tags = sanitizeStringList(extractFrontmatterList(frontmatter, 'tags'));
 
@@ -376,19 +403,19 @@ export class SkillIndexer {
         name = extractFrontmatterScalar(frontmatter, 'name') || name;
       }
 
-      const resolvedDescription = (description || extractHeading(content) || '').slice(0, 100);
+      const resolvedDescription = (description || extractHeading(source) || '').slice(0, 100);
 
       return {
         name,
         description: resolvedDescription,
         tags,
-        filePath,
-        relativePath,
-        fileSize: stat.size,
+        filePath: file.filePath,
+        relativePath: file.relativePath,
+        fileSize: file.size,
         isDirectory: false
       };
     } catch (error) {
-      this.logger.warn(`提取 Skill 元数据失败 ${filePath}: ${error.message}`);
+      this.logger.warn(`提取 Skill 元数据失败 ${file.filePath}: ${error.message}`);
       return null;
     }
   }
@@ -399,55 +426,23 @@ export class SkillIndexer {
    * @private
    */
   async _computeFileHashes() {
-    const hashes = [];
-
-    if (!(await fs.pathExists(this.skillsDir))) {
-      return hashes;
-    }
-
-    const computeFileHash = async (filePath, relativePath) => {
-      try {
-        const stat = await fs.stat(filePath);
-        const content = await fs.readFile(filePath, 'utf-8');
-        const hash = createHash('sha256').update(content).digest('hex');
-
-        return {
-          relativePath,
-          hash,
-          mtime: stat.mtimeMs
-        };
-      } catch {
-        return null;
-      }
-    };
-
-    // 扫描顶层文件
-    const topLevelFiles = await fs.readdir(this.skillsDir);
-    for (const file of topLevelFiles) {
-      const filePath = path.join(this.skillsDir, file);
-      const stat = await fs.stat(filePath);
-
-      if (stat.isFile() && SKILL_FILE_PATTERNS.some((p) => file.endsWith(p))) {
-        const entry = await computeFileHash(filePath, file);
-        if (entry) hashes.push(entry);
-      }
-    }
-
-    // 扫描子目录
-    for (const dir of topLevelFiles) {
-      const dirPath = path.join(this.skillsDir, dir);
-      const stat = await fs.stat(dirPath);
-
-      if (stat.isDirectory()) {
-        const skillFile = path.join(dirPath, SKILL_DIR_INDICATOR);
-        if (await fs.pathExists(skillFile)) {
-          const entry = await computeFileHash(skillFile, `${dir}/SKILL.md`);
-          if (entry) hashes.push(entry);
+    const skillFiles = await collectSkillFiles(this.skillsDir);
+    const fileHashes = await Promise.all(
+      skillFiles.map(async (file) => {
+        try {
+          const content = await fs.readFile(file.filePath, 'utf-8');
+          return {
+            relativePath: file.relativePath,
+            hash: hashContent(content),
+            mtime: file.mtime
+          };
+        } catch {
+          return null;
         }
-      }
-    }
+      })
+    );
 
-    return hashes;
+    return fileHashes.filter(Boolean);
   }
 
   /**
@@ -495,9 +490,17 @@ export class SkillIndexer {
     if (!this._cache?.file_hashes?.files) return;
 
     const fileSet = new Set(files);
-    this._cache.file_hashes.files = this._cache.file_hashes.files.filter(
+    const filesAfterInvalidate = this._cache.file_hashes.files.filter(
       (f) => !fileSet.has(f.relativePath)
     );
+
+    this._cache = {
+      ...this._cache,
+      file_hashes: {
+        ...this._cache.file_hashes,
+        files: filesAfterInvalidate
+      }
+    };
     this.logger.debug(`索引缓存已失效 ${files.length} 个文件`);
   }
 }

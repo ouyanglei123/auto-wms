@@ -13,7 +13,7 @@ import {
   runWmsAuto,
   runStatus,
   runDoctor
-} from '../src/index.js';
+} from '../src/cli-actions.js';
 import { getPackageVersion, COMPONENTS } from '../src/utils.js';
 import { KnowledgeSteward } from '../src/knowledge/knowledge-steward.js';
 import { InstinctManager } from '../src/learning/instinct-manager.js';
