@@ -6,25 +6,30 @@ describe('WmsIntentMatcher', () => {
     vi.restoreAllMocks();
   });
 
-  it('should skip fuzzy matching when exact service keywords already match', () => {
+  it('should match exact service keywords', () => {
     const matcher = new WmsIntentMatcher();
-    const fuzzySpy = vi.spyOn(WmsIntentMatcher.prototype, '_fuzzyMatch');
 
     const result = matcher.analyze('库存冻结流程优化');
 
     expect(result.isWmsRelated).toBe(true);
     expect(result.targetService).toBe('storage');
-    expect(fuzzySpy).not.toHaveBeenCalled();
   });
 
-  it('should still use fuzzy matching when no exact keyword matches are available', () => {
-    const matcher = new WmsIntentMatcher({ fuzzyMatchThreshold: 0.5 });
-    const fuzzySpy = vi.spyOn(WmsIntentMatcher.prototype, '_fuzzyMatch');
+  it('should return isWmsRelated false for non-WMS input', () => {
+    const matcher = new WmsIntentMatcher();
 
     const result = matcher.analyze('盘奌');
 
-    expect(fuzzySpy).toHaveBeenCalled();
     expect(result.isWmsRelated).toBe(false);
-    expect(result.confidence).toBeGreaterThan(0);
+    expect(result.confidence).toBe(0);
+  });
+
+  it('should expand synonyms and match', () => {
+    const matcher = new WmsIntentMatcher();
+
+    const result = matcher.analyze('pick 拣货优化');
+
+    expect(result.isWmsRelated).toBe(true);
+    expect(result.targetService).toBe('outbound');
   });
 });

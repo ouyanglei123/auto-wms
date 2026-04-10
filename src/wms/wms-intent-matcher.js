@@ -403,7 +403,6 @@ export class WmsIntentMatcher {
   constructor(options = {}) {
     this.serviceKeywords = SERVICE_KEYWORDS;
     this.confidenceThreshold = options.confidenceThreshold ?? CONFIDENCE_THRESHOLD;
-    this.fuzzyMatchThreshold = options.fuzzyMatchThreshold ?? 0.8;
   }
 
   /**
@@ -425,40 +424,15 @@ export class WmsIntentMatcher {
 
     const expandedTokens = safePreprocessed.expandedTokens ?? this._expandSynonyms(tokens);
 
-    const exactMatches = this._matchServiceKeywords(expandedTokens, { allowFuzzy: false });
-    if (exactMatches.length > 0) {
-      const best = exactMatches[0];
-      const domainMatch = this._matchBusinessDomain(expandedTokens, best.service);
-      const codeLocations = this._extractCodeLocations(best.service, domainMatch.domain);
-      const confidence = this._computeConfidence(best, domainMatch);
-
-      return {
-        isWmsRelated: true,
-        targetService: best.service,
-        matchedKeywords: best.matchedKeywords,
-        businessDomain: domainMatch.domain,
-        codeLocations,
-        confidence
-      };
-    }
-
-    const serviceMatches = this._matchServiceKeywords(expandedTokens, { allowFuzzy: true });
-    if (serviceMatches.length === 0) {
+    const matches = this._matchServiceKeywords(expandedTokens);
+    if (matches.length === 0) {
       return { isWmsRelated: false, confidence: 0 };
     }
 
-    const best = serviceMatches[0];
+    const best = matches[0];
     const domainMatch = this._matchBusinessDomain(expandedTokens, best.service);
     const codeLocations = this._extractCodeLocations(best.service, domainMatch.domain);
     const confidence = this._computeConfidence(best, domainMatch);
-
-    if (confidence < this.confidenceThreshold) {
-      return {
-        isWmsRelated: false,
-        confidence,
-        reason: `置信度 ${confidence}% < 阈值 ${this.confidenceThreshold}%`
-      };
-    }
 
     return {
       isWmsRelated: true,
@@ -497,12 +471,8 @@ export class WmsIntentMatcher {
     return text.split(/[\s,，。.、；;()（）]+/).filter((t) => t.length > 0);
   }
 
-  /**
-   * 服务级别关键词匹配（精确 + 模糊）
-   */
-  _matchServiceKeywords(tokens, options = {}) {
-    const { allowFuzzy = true } = options;
-    const exactMatches = [];
+  _matchServiceKeywords(tokens) {
+    const matches = [];
 
     for (const [service, config] of Object.entries(this.serviceKeywords)) {
       const matched = [];
@@ -514,7 +484,7 @@ export class WmsIntentMatcher {
       }
 
       if (matched.length > 0) {
-        exactMatches.push({
+        matches.push({
           service,
           matchedKeywords: matched,
           fuzzyKeywords: [],
@@ -523,95 +493,7 @@ export class WmsIntentMatcher {
       }
     }
 
-    if (exactMatches.length > 0 || !allowFuzzy) {
-      return exactMatches.sort((a, b) => b.score - a.score);
-    }
-
-    const matches = [];
-
-    for (const [service, config] of Object.entries(this.serviceKeywords)) {
-      const fuzzyMatched = [];
-
-      for (const kw of config.keywords) {
-        let bestMatch = null;
-
-        for (const token of tokens) {
-          const score = this._fuzzyMatch(token, kw);
-          if (score >= this.fuzzyMatchThreshold) {
-            bestMatch = { token, score };
-            break;
-          }
-        }
-
-        if (bestMatch) {
-          fuzzyMatched.push({ keyword: kw, matched: bestMatch.token, score: bestMatch.score });
-        }
-      }
-
-      if (fuzzyMatched.length > 0) {
-        matches.push({
-          service,
-          matchedKeywords: [],
-          fuzzyKeywords: fuzzyMatched.map((f) => f.keyword),
-          score: config.priority + fuzzyMatched.length * 5
-        });
-      }
-    }
-
     return matches.sort((a, b) => b.score - a.score);
-  }
-
-  /**
-   * 模糊匹配（编辑距离算法）
-   * @param {string} s1 - 字符串1
-   * @param {string} s2 - 字符串2
-   * @returns {number} 相似度分数 0-1
-   */
-  _fuzzyMatch(s1, s2) {
-    if (!s1 || !s2) return 0;
-    if (s1 === s2) return 1;
-
-    const len1 = s1.length;
-    const len2 = s2.length;
-    const maxLen = Math.max(len1, len2);
-
-    if (maxLen === 0) return 1;
-
-    // 早期退出：长度差异太大
-    if (Math.abs(len1 - len2) > maxLen * 0.3) return 0;
-
-    // 包含关系
-    if (s1.includes(s2) || s2.includes(s1)) {
-      return 0.8 + (Math.min(len1, len2) / maxLen) * 0.2;
-    }
-
-    // 编辑距离
-    const distance = this._levenshteinDistance(s1, s2);
-    return 1 - distance / maxLen;
-  }
-
-  /**
-   * Levenshtein 编辑距离
-   */
-  _levenshteinDistance(s1, s2) {
-    const dp = Array(s1.length + 1)
-      .fill(null)
-      .map(() => Array(s2.length + 1).fill(0));
-
-    for (let i = 0; i <= s1.length; i++) dp[i][0] = i;
-    for (let j = 0; j <= s2.length; j++) dp[0][j] = j;
-
-    for (let i = 1; i <= s1.length; i++) {
-      for (let j = 1; j <= s2.length; j++) {
-        if (s1[i - 1] === s2[j - 1]) {
-          dp[i][j] = dp[i - 1][j - 1];
-        } else {
-          dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-        }
-      }
-    }
-
-    return dp[s1.length][s2.length];
   }
 
   /**

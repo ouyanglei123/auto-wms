@@ -1,21 +1,6 @@
 /**
  * MCP 模块导出
  *
- * 导出：
- * - McpClient: MCP 客户端
- * - McpServer: MCP 服务端
- * - McpToolRegistry: 工具注册表类
- * - toolRegistry: 工具注册表单例
+ * 仅保留共享协议定义，Client/Server 已移除（无实际消费者）。
  */
-import McpClient, { McpToolRegistry, toolRegistry } from './mcp-client.js';
-import McpServer, { createMcpServer } from './mcp-server.js';
-
-export { McpClient, McpServer, McpToolRegistry, createMcpServer, toolRegistry };
-
-export default {
-  McpClient,
-  McpServer,
-  McpToolRegistry,
-  createMcpServer,
-  toolRegistry
-};
+export { DEFAULT_TOOLS, MCP_ERRORS, McpToolRegistry, createMcpError } from './mcp-shared.js';

@@ -1,23 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import mcpModule, {
-  McpClient,
-  McpServer,
-  McpToolRegistry,
-  createMcpServer,
-  toolRegistry
-} from '../../src/mcp/index.js';
+import { DEFAULT_TOOLS, MCP_ERRORS, McpToolRegistry, createMcpError } from '../../src/mcp/index.js';
 
 describe('mcp index exports', () => {
-  it('should expose stable ESM exports', () => {
-    expect(McpClient).toBeTypeOf('function');
-    expect(McpServer).toBeTypeOf('function');
+  it('should expose shared protocol utilities', () => {
+    expect(DEFAULT_TOOLS).toBeInstanceOf(Array);
+    expect(DEFAULT_TOOLS.length).toBeGreaterThan(0);
     expect(McpToolRegistry).toBeTypeOf('function');
-    expect(createMcpServer).toBeTypeOf('function');
-    expect(toolRegistry).toBeDefined();
-    expect(mcpModule.McpClient).toBe(McpClient);
-    expect(mcpModule.McpServer).toBe(McpServer);
-    expect(mcpModule.McpToolRegistry).toBe(McpToolRegistry);
-    expect(mcpModule.toolRegistry).toBe(toolRegistry);
-    expect(mcpModule.createMcpServer).toBe(createMcpServer);
+    expect(createMcpError).toBeTypeOf('function');
+    expect(MCP_ERRORS).toBeDefined();
   });
 });
