@@ -17,6 +17,7 @@ vi.mock('../src/index.js', () => ({
   runInstall: vi.fn(),
   runUpdate: vi.fn(),
   runUninstall: vi.fn(),
+  runDocs: vi.fn(),
   runRoute: vi.fn(),
   runWmsAuto: vi.fn(),
   runStatus: vi.fn(),
@@ -66,7 +67,7 @@ function createHandlers() {
     interactiveMode: vi.fn().mockResolvedValue(undefined),
     runInstall: vi.fn().mockResolvedValue(undefined),
     runUpdate: vi.fn().mockResolvedValue(undefined),
-    runUninstall: vi.fn().mockResolvedValue(undefined),
+    runDocs: vi.fn().mockResolvedValue(undefined),
     runRoute: vi.fn().mockResolvedValue(undefined),
     runWmsAuto: vi.fn().mockResolvedValue(undefined),
     runStatus: vi.fn().mockResolvedValue(undefined),
@@ -153,18 +154,13 @@ describe('cli.js', () => {
     expect(shouldParseCli(['node'], 'file:///cli.js')).toBe(false);
   });
 
-  it('routes status through the injected handler with normalized options', async () => {
+  it('routes docs through the injected handler', async () => {
     const handlers = createHandlers();
     const program = createProgram(handlers);
 
-    await program.parseAsync(['node', 'auto', 'status', '--json', '--directory', '.'], {
-      from: 'node'
-    });
+    await program.parseAsync(['node', 'auto', 'docs'], { from: 'node' });
 
-    expect(handlers.runStatus).toHaveBeenCalledWith({
-      json: true,
-      directory: '.'
-    });
+    expect(handlers.runDocs).toHaveBeenCalledOnce();
   });
 
   it('routes doctor through the injected handler with normalized options', async () => {

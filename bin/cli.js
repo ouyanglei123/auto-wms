@@ -8,13 +8,13 @@ import {
   runInstall,
   runUpdate,
   runUninstall,
+  runDocs,
   runRoute,
   runWmsAuto,
   runStatus,
   runDoctor
 } from '../src/index.js';
-import { getPackageVersion, COMPONENTS, openBrowser } from '../src/utils.js';
-import { DOCS_URL } from '../src/config.js';
+import { getPackageVersion, COMPONENTS } from '../src/utils.js';
 import { KnowledgeSteward } from '../src/knowledge/knowledge-steward.js';
 import { InstinctManager } from '../src/learning/instinct-manager.js';
 import { learnFromTaskEvent } from '../src/learning/task-event-learning.js';
@@ -25,6 +25,7 @@ const defaultHandlers = {
   runInstall,
   runUpdate,
   runUninstall,
+  runDocs,
   runRoute,
   runWmsAuto,
   runStatus,
@@ -94,6 +95,7 @@ function buildInstinctArray(options, key) {
 
 export function createProgram(handlers = defaultHandlers) {
   const program = new Command();
+  const resolvedHandlers = { ...defaultHandlers, ...handlers };
 
   async function readStdin() {
     if (process.stdin.isTTY) {
@@ -119,7 +121,7 @@ export function createProgram(handlers = defaultHandlers) {
   // 默认命令 - 交互模式
   program.action(
     withCliErrorHandling(async () => {
-      await handlers.interactiveMode();
+      await resolvedHandlers.interactiveMode();
     })
   );
 
@@ -132,7 +134,7 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-c, --components <list>', '指定安装的组件，逗号分隔（如: agents,commands,skills）')
     .action(
       withCliErrorHandling(async (options) => {
-        await handlers.runInstall(buildInstallOptions(options));
+        await resolvedHandlers.runInstall(buildInstallOptions(options));
       })
     );
 
@@ -143,7 +145,7 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-y, --yes', '跳过确认提示')
     .action(
       withCliErrorHandling(async (options) => {
-        await handlers.runUpdate({ yes: options.yes });
+        await resolvedHandlers.runUpdate({ yes: options.yes });
       })
     );
 
@@ -154,7 +156,7 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-y, --yes', '跳过确认提示')
     .action(
       withCliErrorHandling(async (options) => {
-        await handlers.runUninstall({ yes: options.yes });
+        await resolvedHandlers.runUninstall({ yes: options.yes });
       })
     );
 
@@ -178,16 +180,7 @@ export function createProgram(handlers = defaultHandlers) {
     .description('打开使用文档')
     .action(
       withCliErrorHandling(async () => {
-        const url = DOCS_URL;
-        console.log('');
-        console.log(chalk.cyan('正在打开文档...'));
-        console.log(chalk.gray(`  ${url}`));
-        console.log('');
-
-        const success = await openBrowser(url);
-        if (!success) {
-          console.log(chalk.yellow('无法自动打开浏览器，请手动访问上述链接。'));
-        }
+        await resolvedHandlers.runDocs();
       })
     );
 
@@ -449,7 +442,7 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-j, --json', '以 JSON 格式输出')
     .action(
       withCliErrorHandling(async (intent, options) => {
-        await handlers.runRoute(intent, options);
+        await resolvedHandlers.runRoute(intent, options);
       })
     );
 
@@ -460,7 +453,7 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-d, --directory <path>', '指定项目目录')
     .action(
       withCliErrorHandling(async (options) => {
-        await handlers.runStatus(buildStatusOptions(options));
+        await resolvedHandlers.runStatus(buildStatusOptions(options));
       })
     );
 
@@ -472,7 +465,7 @@ export function createProgram(handlers = defaultHandlers) {
     .option('-d, --directory <path>', '指定项目目录')
     .action(
       withCliErrorHandling(async (options) => {
-        await handlers.runDoctor(buildDoctorOptions(options));
+        await resolvedHandlers.runDoctor(buildDoctorOptions(options));
       })
     );
 
@@ -485,7 +478,7 @@ export function createProgram(handlers = defaultHandlers) {
     .option('--approve-quest-map', '确认 Quest Map 后允许进入执行阶段')
     .action(
       withCliErrorHandling(async (intent, options) => {
-        await handlers.runWmsAuto(intent, buildWmsAutoOptions(options));
+        await resolvedHandlers.runWmsAuto(intent, buildWmsAutoOptions(options));
       })
     );
 
